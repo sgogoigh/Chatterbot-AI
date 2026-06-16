@@ -1,0 +1,42 @@
+# Chatterbot-AI backend dependencies
+# See IMPLEMENTATION.md §2.2. Pins are current minor lines (doc's 2023 pins
+# were bumped — recheck R1). Lock exact versions in CI after first green build.
+
+# ---- web / async ----
+fastapi==0.115.*
+uvicorn[standard]==0.30.*
+python-multipart==0.0.*          # multipart upload (.pptx)
+pydantic==2.*
+pydantic-settings==2.*
+httpx==0.27.*                    # async HTTP (Groq, Ollama fallback)
+
+# ---- realtime media ----
+livekit==0.17.*                  # rtc SDK (AudioStream/AudioSource)
+livekit-agents==0.12.*           # agent worker framework
+livekit-api==0.7.*               # AccessToken / room admin
+
+# ---- ML / audio ----
+torch==2.2.*                     # Silero VAD via torch.hub (CPU build)
+onnxruntime==1.18.*              # Silero VAD ONNX path (preferred — §10)
+faster-whisper==1.0.*            # CTranslate2 INT8 ASR
+sentence-transformers==2.7.*     # all-MiniLM-L6-v2 embeddings
+piper-tts==1.2.*                 # Piper VITS TTS
+numpy==1.26.*
+scipy==1.13.*                    # resampling (signal.resample_poly)
+soundfile==0.12.*                # WAV read/write
+
+# ---- RAG ----
+faiss-cpu==1.8.*
+rank-bm25==0.2.*                 # lexical retrieval for hybrid search
+
+# ---- ingestion ----
+python-pptx==0.6.*
+pillow==10.*                     # image handling for OCR
+pytesseract==0.3.*               # OCR wrapper (tesseract installed in image)
+pdf2image==1.17.*                # slide rasterization via poppler (R9)
+
+# ---- ops ----
+loguru==0.7.*
+tenacity==8.*                    # retry/backoff for external APIs
+pytest==8.*
+pytest-asyncio==0.23.*
