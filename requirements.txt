@@ -11,14 +11,18 @@ pydantic-settings==2.*
 httpx==0.27.*                    # async HTTP (Groq, Ollama fallback)
 
 # ---- realtime media ----
-livekit==0.17.*                  # rtc SDK (AudioStream/AudioSource)
-livekit-agents==0.12.*           # agent worker framework
-livekit-api==0.7.*               # AccessToken / room admin
+# NOTE (R1): livekit-agents constrains the livekit rtc version, so DON'T hard-pin
+# livekit independently — let the agents framework resolve a compatible rtc SDK.
+livekit>=0.18,<1                  # rtc SDK (AudioStream/AudioSource); brought in-range by agents
+livekit-agents>=0.12,<0.13       # agent worker framework (0.12.x line)
+livekit-api>=0.7,<1              # AccessToken / room admin
 
 # ---- ML / audio ----
-torch==2.2.*                     # Silero VAD via torch.hub (CPU build)
-onnxruntime==1.18.*              # Silero VAD ONNX path (preferred — §10)
-faster-whisper==1.0.*            # CTranslate2 INT8 ASR
+onnxruntime==1.18.*              # Silero VAD inference (pure ONNX path — §10)
+silero-vad>=5.1                  # bundles the Silero v5 .onnx model (loaded via onnxruntime)
+faster-whisper==1.0.*            # CTranslate2 INT8 ASR (no torch; uses CTranslate2)
+# NOTE: torch is NOT pinned directly — VAD no longer needs it. It is still pulled
+# transitively by sentence-transformers (embeddings). CPU build is fine.
 sentence-transformers==2.7.*     # all-MiniLM-L6-v2 embeddings
 piper-tts==1.2.*                 # Piper VITS TTS
 numpy==1.26.*

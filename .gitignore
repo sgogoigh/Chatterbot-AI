@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Chatterbot-AI: downloaded model weights (large; auto-downloaded at runtime)
+models/
