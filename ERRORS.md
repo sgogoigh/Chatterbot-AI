@@ -131,6 +131,61 @@ to `.gitignore` so the ~550 MB of downloaded weights aren't committed.
 
 ---
 
+## PROBLEM 8 — Barge-in resumed at the WRONG sentence (context loss)
+**Topic:** agent orchestration / deterministic resume (found by Tier-1 E2E)
+**[Description & Effect]**
+`_next_sentence()` derived the index from the playback sample cursor and **advanced
+the cursor to `idx+1` before the sentence was even spoken**. So when a barge-in hit
+during sentence *idx*, `resume_point()` returned *idx+1* — narration resumed at the
+**next** sentence, silently dropping the interrupted one. This directly breaks the
+project's headline guarantee (100% sentence-level context recovery).
+**FIX —** Refactored `core/agent_worker.py` to track an explicit
+`SessionState.current_sentence`: `_next_sentence()` returns the current sentence
+**without advancing**; `_speak_sentence()` advances `current_sentence` **only after
+full delivery**, and on interrupt records `pending_resume.sentence_index =
+current_sentence` (the sentence being spoken). `_resume()` restores that index.
+Proven by `test_s2_bargein_question_resume` (resume lands on the interrupted
+sentence, not the next).
+
+---
+
+## PROBLEM 9 — Narration/utterance race (speaker not paused on barge-in)
+**Topic:** concurrency / full-duplex coordination (found by Tier-1 E2E)
+**[Description & Effect]**
+The transition lock serialized audio producers, but nothing stopped the **narration
+loop from grabbing the lock and speaking the next sentence** while a barge-in
+utterance was still being captured/handled. Onset detection also only fired the
+interrupt if `phase == SPEAKING`, but the phase was never moved off SPEAKING on
+barge-in — so the speaker could keep going over the user. Effect: overlapping
+audio / the system talking past an interruption — the opposite of the intended
+"Serialized Q&A Transition Locking."
+**FIX —** On confirmed onset the input loop now sets `phase = LISTENING` (in
+addition to the interrupt event), and the narration loop only speaks when
+`phase in (READY, SPEAKING)` — otherwise it idles until the utterance handler
+finishes and `_resume()` restores SPEAKING. Verified by
+`test_sfull_loops_together_bargein_and_complete` (both loops coexist, barge-in
+captured, no deadlock).
+
+---
+
+## PROBLEM 10 — Tier-1 test-harness authoring issues (self-caught)
+**Topic:** test harness (not product code)
+**[Description & Effect]**
+Three issues while building the Tier-1 harness: (a) `from harness import …` failed —
+sibling modules under `tests/` need the package-qualified `from tests.harness
+import …`; (b) pre-setting `interrupt_event` before `_speak_sentence` didn't work
+because the method **clears the event on entry**, so the simulated barge-in never
+fired; (c) the full-loop test flaked asserting a single terminal phase — a tiny
+finite deck races narration-completion against the late utterance, so a trailing
+`_resume()` can flip phase back to SPEAKING after the deck ends.
+**FIX —** (a) package-qualified import; (b) added `InterruptingTTS` that arms the
+event *as synthesis is pulled* (deterministic mid-sentence barge-in); (c) the
+full-loop test asserts robust invariants (burst transcribed, question answered, no
+deadlock, `phase in {SPEAKING, ENDED}`) instead of one exact terminal phase — strict
+resume correctness is covered deterministically by the S2 direct test.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with

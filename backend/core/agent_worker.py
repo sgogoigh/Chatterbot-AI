@@ -194,7 +194,12 @@ class ChatterbotAgentWorker:
                 prob = self.reg.vad.probability(chunk)
                 buf.update(chunk, prob)
                 if buf.just_started_speech() and self.state.phase == SessionPhase.SPEAKING:
-                    self.state.interrupt_event.set()    # barge-in!
+                    # Barge-in: signal the speaker to abort AND flip the phase to
+                    # LISTENING so the narration loop pauses until this utterance is
+                    # handled. Without the phase flip the speaker could start the
+                    # next sentence before the user even finishes talking (race).
+                    self.state.interrupt_event.set()
+                    self.state.phase = SessionPhase.LISTENING
                 if buf.utterance_complete():
                     audio = buf.take()
                     asyncio.create_task(self._on_utterance(audio))
@@ -210,10 +215,16 @@ class ChatterbotAgentWorker:
         import asyncio
 
         while not self._done():
-            if self.state.phase == SessionPhase.PAUSED:
-                await asyncio.sleep(0.1)
+            # Only narrate when free to speak. PAUSED (STOP), LISTENING (barge-in
+            # detected) and PROCESSING/ANSWERING (utterance being handled) all mean
+            # "don't start a sentence right now" — wait and re-check. This is what
+            # serialises the speaker with the utterance handler beyond the lock.
+            if self.state.phase not in (SessionPhase.READY, SessionPhase.SPEAKING):
+                await asyncio.sleep(0.02)
                 continue
             async with self.state.transition_lock:
+                if self.state.phase not in (SessionPhase.READY, SessionPhase.SPEAKING):
+                    continue                         # state changed while awaiting lock
                 sentence = self._next_sentence()
                 if sentence is None:
                     break
@@ -237,6 +248,8 @@ class ChatterbotAgentWorker:
         from livekit import rtc
 
         self.state.interrupt_event.clear()
+        idx = self.state.current_sentence              # the sentence we are about to speak
+        self.state.tracker.seek_to_sentence(idx)       # cursor at its start (sample bookkeeping)
         sent_samples = 0
         # synthesize_stream is a blocking generator; pull it via a thread so the
         # event loop (and interrupt checking) keeps running.
@@ -244,10 +257,13 @@ class ChatterbotAgentWorker:
         for chunk in chunks:
             if self.state.interrupt_event.is_set():
                 await self.audio_out.clear_queue()      # drop buffered TTS now
+                # Resume at the sentence we were speaking — NOT the next one. We do
+                # NOT advance current_sentence, so _resume()/_next_sentence() will
+                # re-deliver this exact sentence from its start (100% recovery).
                 self.state.pending_resume = ResumePoint(
                     slide_index=self.state.current_slide,
                     track=self.state.current_track,
-                    sentence_index=self.state.tracker.resume_point(),  # snapped to start
+                    sentence_index=idx,
                 )
                 return
             frame = rtc.AudioFrame(
@@ -259,8 +275,9 @@ class ChatterbotAgentWorker:
             await self.audio_out.capture_frame(frame)
             self.state.tracker.on_frames_pushed(len(chunk))
             sent_samples += len(chunk)
-        # Record the exact synthesized length so subsequent resume math is precise.
-        self.state.tracker.set_exact_length(self.state.tracker.current_sentence_index(), sent_samples)
+        # Full sentence delivered: record its exact length and advance the cursor.
+        self.state.tracker.set_exact_length(idx, sent_samples)
+        self.state.current_sentence += 1
 
     # ---------------------------------------------------- utterance handler
     async def _on_utterance(self, audio: np.ndarray) -> None:
@@ -334,18 +351,21 @@ class ChatterbotAgentWorker:
             self.state.current_slide = max(self.state.current_slide - 1, 0)
         elif intent == Intent.GOTO and slide_no is not None:
             self.state.current_slide = max(0, min(slide_no, n_slides - 1))
+        self.state.current_sentence = 0                 # start the new slide from its first sentence
         self.state.pending_resume = None                # integrity: drop stale resume
         self._rebuild_tracker_for_current_slide()
 
     def _resume(self) -> None:
         """Restore the SPEAKING phase so the narration loop continues (§9.3).
 
-        Seeks the tracker to the pending resume sentence (if any) — always a
-        sentence start — guaranteeing zero context loss after a Q&A or spurious
-        interrupt.
+        Restores ``current_sentence`` to the interrupted sentence (always a sentence
+        start) so narration re-delivers it in full — guaranteeing zero context loss
+        after a Q&A or spurious interrupt. A navigation that already cleared
+        ``pending_resume`` simply continues from the new slide's first sentence.
         """
         if self.state.pending_resume is not None:
-            self.state.tracker.seek_to_sentence(self.state.pending_resume.sentence_index)
+            self.state.current_sentence = self.state.pending_resume.sentence_index
+            self.state.tracker.seek_to_sentence(self.state.current_sentence)
             self.state.pending_resume = None
         self.state.interrupt_event.clear()
         self.state.phase = SessionPhase.SPEAKING
@@ -384,33 +404,38 @@ class ChatterbotAgentWorker:
         self.state.tracker = PlaybackTracker(sentences, self.reg.tts.native_sr, wpm)
 
     def _next_sentence(self):
-        """Return the next unspoken sentence on the current slide, advancing slides.
+        """Return the sentence to speak next WITHOUT advancing (advance happens
+        only after the sentence is fully delivered, in :meth:`_speak_sentence`).
 
-        Pulls from the tracker's cursor; when a slide's sentences are exhausted it
-        auto-advances to the next slide (rebuilding the tracker). Returns None when
-        the whole presentation is finished.
+        Uses the explicit ``current_sentence`` index. When the current slide's
+        sentences are exhausted it rolls over to the next slide (resetting the
+        index + rebuilding the tracker). Returns None when the whole presentation
+        is finished. Keeping advancement out of this method is what lets a barge-in
+        resume re-deliver the interrupted sentence rather than skipping it.
         """
         script = self._current_script()
         if script is None:
             return None
-        idx = self.state.tracker.current_sentence_index()
-        if idx < len(script.sentences):
-            sentence = script.sentences[idx]
-            # advance cursor past this sentence for the next call
-            self.state.tracker.seek_to_sentence(min(idx + 1, len(script.sentences) - 1))
-            if idx + 1 >= len(script.sentences):
-                self._advance_slide_after_current()
-            return sentence
-        self._advance_slide_after_current()
-        return self._next_sentence() if not self._done() else None
+        if self.state.current_sentence < len(script.sentences):
+            return script.sentences[self.state.current_sentence]
+        # Slide exhausted → roll over to the next slide, then retry.
+        if not self._advance_slide():
+            return None
+        return self._next_sentence()
 
-    def _advance_slide_after_current(self) -> None:
-        """Move to the next slide and rebuild the tracker (end-of-slide transition)."""
+    def _advance_slide(self) -> bool:
+        """Advance to the next slide (reset sentence index, rebuild tracker).
+
+        Returns True if a next slide exists, False when the deck is finished (the
+        ``current_slide`` is parked at the slide count as the done-sentinel).
+        """
         if self.state.current_slide < self._slide_count() - 1:
             self.state.current_slide += 1
+            self.state.current_sentence = 0
             self._rebuild_tracker_for_current_slide()
-        else:
-            self.state.current_slide = self._slide_count()  # sentinel past end
+            return True
+        self.state.current_slide = self._slide_count()      # sentinel past end
+        return False
 
     def _slide_text(self) -> str:
         """Return the spoken text of the current slide (primary Q&A context, §18.2)."""

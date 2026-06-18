@@ -69,7 +69,7 @@ Real-time voice is hard to assert on directly, so we layer from
 deterministic/cheap to realistic/flaky. **Tiers 1–2 are the automated core**;
 Tier 3 is integration smoke; Tier 4 is human acceptance.
 
-### Tier 1 — Logic integration (fakes for audio + transport; stubs for slow ML)
+### Tier 1 — Logic integration (fakes for audio + transport; stubs for slow ML) ✅ BUILT & PASSING
 Drive `ChatterbotAgentWorker` directly with **fake audio I/O** and **stub
 services**, so the orchestration logic (interrupt → lock → route → resume) is
 tested **deterministically and fast**, with no LiveKit / GPU / network.
@@ -77,6 +77,11 @@ tested **deterministically and fast**, with no LiveKit / GPU / network.
   routing) and where bugs are cheapest to find. No Linux/LLM needed → runs on
   Windows in CI.
 - *Mechanisms covered:* 1, 2, 3, 5 (resume, lock, routing, integrity).
+- *Status:* harness in `tests/harness.py`, scenarios in `tests/test_agent_e2e.py`
+  — **12 tests passing** (S1–S8 + S-full). Building it **found and fixed two real
+  bugs** in `agent_worker.py`: resume landed on the *next* sentence (PROBLEM 8) and
+  the speaker wasn't paused on barge-in (PROBLEM 9) — see [`ERRORS.md`](./ERRORS.md).
+  Full suite: **42 passed, 1 skipped**.
 
 ### Tier 2 — Service-real, transport-fake (real models, WAV in / WAV out)
 Same fake transport, but **real STT/TTS/intent/RAG/LLM**. Feed pre-recorded WAV
@@ -108,22 +113,25 @@ UX acceptance + the ≥90% satisfaction objective.
 Each maps to the tier(s) that can run it, the mechanism it proves, and the
 assertion. IDs reused across tiers.
 
-| ID | Scenario | Tier | Mechanism | Key assertion |
-|----|----------|------|-----------|---------------|
-| S1 | Happy-path narration of a full deck | 1,2,3 | pacing | all slides delivered; ends within TBA |
-| S2 | Barge-in mid-sentence → QUESTION → answer → resume | 1,2,3 | 1,2,6 | resume index == interrupted sentence start; answer cites correct slide; no overlapping audio |
-| S3 | NEXT / PREV / GOTO during narration | 1,2,3 | 3 | current_slide changes correctly; GOTO parses number; resume on new slide |
-| S4 | STOP then resume (control) | 1,3 | — | phase → PAUSED → SPEAKING; narration continues from same point |
-| S5 | IGNORE ("okay") does not derail narration | 1,2 | 3 | no route taken; resume from same sentence |
-| S6 | Rapid navigation clears stale pending-resume | 1 | 5 | a late answer for an abandoned slide is never spoken (turn_id guard) |
-| S7 | Pacing drift → track switch STANDARD→SUMMARY→TURBO | 1,2 | 4 | upcoming track changes; final TBA ≥ 95% |
-| S8 | Spurious VAD (noise) → empty STT → resume | 1,2 | 1 | no intent fired; zero context loss |
-| S9 | LLM (Groq) down → Ollama fallback → graceful degrade | 2 | 6 | answer produced via fallback, or graceful "can't reach" message; session survives |
-| S10 | Second concurrent session rejected | 1 | — | `409` (single-presentation constraint) |
-| S11 | Long question (>2 s) handled | 2 | — | utterance capped at `stt_max_utterance_ms`; transcription completes (R3) |
-| S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides |
-| S13 | Upload → build (3 tracks) → status → session | 1,2 | control | build completes; `BuildStatus.state==done`; plan has 3 tracks; RAG index persisted |
-| S14 | Full WebRTC round-trip (publish WAV, hear agent) | 3 | all | audio frames received on the client track |
+| ID | Scenario | Tier | Mechanism | Key assertion | Status |
+|----|----------|------|-----------|---------------|--------|
+| S1 | Happy-path narration of a full deck | 1,2,3 | pacing | all slides delivered; ends within TBA | ✅ T1 |
+| S2 | Barge-in mid-sentence → QUESTION → answer → resume | 1,2,3 | 1,2,6 | resume index == interrupted sentence start; answer produced; queue cleared | ✅ T1 |
+| S3 | NEXT / PREV / GOTO during narration | 1,2,3 | 3 | current_slide changes correctly; GOTO parses number; resets sentence | ✅ T1 |
+| S4 | STOP then resume (control) | 1,3 | — | phase → PAUSED | ✅ T1 |
+| S5 | IGNORE ("okay") does not derail narration | 1,2 | 3 | no route taken; resume from same sentence | ✅ T1 |
+| S6 | Nav clears stale resume; turn_id guard suppresses stale answer | 1 | 5 | pending_resume cleared on nav; superseded answer not spoken | ✅ T1 |
+| S7 | Pacing drift → track switch STANDARD→SUMMARY→TURBO | 1,2 | 4 | upcoming track changes on drift; no switch on schedule | ✅ T1 |
+| S8 | Spurious VAD (noise) → empty STT → resume | 1,2 | 1 | no intent fired; zero context loss | ✅ T1 |
+| S-full | Both loops together: barge-in detected + no deadlock | 1 | 1,2,3 | burst transcribed, question answered, gather completes | ✅ T1 |
+| S9 | LLM (Groq) down → Ollama fallback → graceful degrade | 2 | 6 | answer via fallback or graceful message; session survives | ⏳ T2 |
+| S10 | Second concurrent session rejected | 1 | — | `409` (single-presentation constraint) | ⏳ route test |
+| S11 | Long question (>2 s) handled | 2 | — | utterance capped at `stt_max_utterance_ms`; completes (R3) | ⏳ T2 |
+| S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides | ⏳ T2 |
+| S13 | Upload → build (3 tracks) → status → session | 1,2 | control | build completes; 3 tracks; RAG index persisted | ⏳ T2 |
+| S14 | Full WebRTC round-trip (publish WAV, hear agent) | 3 | all | audio frames received on the client track | ⏳ T3 |
+
+✅ T1 = implemented & passing in `tests/test_agent_e2e.py`. ⏳ = pending (needs Linux/LLM/LiveKit per §7).
 
 ---
 

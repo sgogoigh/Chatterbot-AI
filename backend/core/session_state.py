@@ -47,6 +47,7 @@ class SessionState:
     tracker: PlaybackTracker
     phase: SessionPhase = SessionPhase.READY
     current_slide: int = 0
+    current_sentence: int = 0             # index within the current slide's script
     current_track: Track = Track.STANDARD
     start_monotonic: float = 0.0          # set when narration first begins
     turn_id: int = 0                      # bumped per interrupt/answer (R11 guard)
