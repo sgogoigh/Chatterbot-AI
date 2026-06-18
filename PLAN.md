@@ -2,7 +2,6 @@
 
 > **Status:** Blueprint / planning document.
 > **Source of truth:** `../Voice AI Project.docx` (full text mirrored to `../doc-text.txt`).
-> **Original name in the source document:** *QuakeAI*. This project is the renamed and improved successor: **Chatterbot-AI**. Throughout this plan, where the document says "QuakeAI" we read it as "Chatterbot-AI". Improvements over the documented baseline are flagged explicitly in [§16 Improvements & Open Decisions](#16-improvements--open-decisions).
 > **Scope of this document:** A *blueprint* — what the system is, what it must do, the flow, the services, and the expected path of every decision. It deliberately does **not** contain detailed code-level implementation. That comes in a later phase.
 
 ---
@@ -26,13 +25,12 @@
 15. [Implementation Phases, Milestones & Timeline](#15-implementation-phases-milestones--timeline)
 16. [Improvements & Open Decisions](#16-improvements--open-decisions)
 17. [Risks, Constraints & Out-of-Scope](#17-risks-constraints--out-of-scope)
-18. [Naming Migration: QuakeAI → Chatterbot-AI](#18-naming-migration-quakeai--chatterbot-ai)
 
 ---
 
 ## 1. Executive Summary — What the Document Describes
 
-Chatterbot-AI (documented as *QuakeAI*) is a **real-time, full-duplex AI voice interaction system with context-aware interruption handling**, purpose-built for **automated presentation delivery**. It closes the gap between slide-authoring tools (PowerPoint, Google Slides, Prezi) and conversational AI.
+Chatterbot-AI is a **real-time, full-duplex AI voice interaction system with context-aware interruption handling**, purpose-built for **automated presentation delivery**. It closes the gap between slide-authoring tools (PowerPoint, Google Slides, Prezi) and conversational AI.
 
 The system's documented behavior loop:
 
@@ -237,7 +235,7 @@ The system is a **modular, layered architecture** separating concerns across **p
 
 ## 7. Backend — Services & Responsibilities
 
-> The doc places files under `core/` and `services/`. Names below preserve the documented module layout; class names are migrated from `Quake*` to `Chatterbot*` where applicable (see [§18](#18-naming-migration-quakeai--chatterbot-ai)).
+> The doc places files under `core/` and `services/`. Names below preserve the documented module layout;.
 
 ### 7.1 What the backend must support (capabilities)
 - FastAPI REST endpoints (upload, session lifecycle, slides, status, navigation control).
@@ -456,8 +454,6 @@ Documented as an **8-week, 4-phase** plan.
 
 ## 16. Improvements & Open Decisions
 
-The rename to **Chatterbot-AI** is explicitly tied to *improvements over the documented QuakeAI baseline*. Candidate improvement areas (to confirm before implementation):
-
 1. **Close the Intent Accuracy gap (89.9% → ≥95%).** The single failing gate. Levers: richer/more prototypes per class, better confidence-threshold tuning, light fine-tuning, or a small classifier head over MiniLM embeddings — while keeping ≤20 ms latency and the lightweight footprint.
 2. **Reduce STT-dominated E2E latency (~1.5 s).** Streaming/chunked Whisper decoding, smaller/quantized variants, or partial-hypothesis early routing. (Doc lists optional GPU offload as future work, but CPU-only is a core constraint.)
 3. **Confirm hybrid retrieval.** Doc states both "FAISS semantic search" (module §5.1.7) and "hybrid BM25 + embedding" (RAG gap, ch.6). Decide whether the first release ships pure-embedding or true hybrid BM25+embedding.
@@ -486,17 +482,6 @@ The rename to **Chatterbot-AI** is explicitly tied to *improvements over the doc
 Multi-language support, GPU acceleration, speaker diarization, emotion recognition, gesture integration, mobile native apps.
 
 ---
-
-## 18. Naming Migration: QuakeAI → Chatterbot-AI
-
-The source document uses **QuakeAI**; this project is **Chatterbot-AI**. Migration rules for implementation:
-
-| Documented (QuakeAI) | Chatterbot-AI |
-|----------------------|---------------|
-| Product name "QuakeAI" | "Chatterbot-AI" |
-| `QuakeAgentWorker` (orchestrator class) | `ChatterbotAgentWorker` |
-| Repo `github.com/HarshitPG/QuakeAI` | this repo (Chatterbot-AI) |
-| All other module/class names (PlaybackTracker, PacingService, FastIntentClassifier, KnowledgeBase, SlideProcessor, STT/TTS services) | **unchanged** |
 
 > Keep file paths from the doc (`core/`, `services/`) so the blueprint maps 1:1 onto the documented design; only the product-facing name and the central orchestrator class are renamed.
 
