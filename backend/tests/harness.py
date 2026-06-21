@@ -211,7 +211,7 @@ class StubIntent:
 
 
 class StubKB:
-    """Returns a canned retrieved context (no FAISS/BM25 index required)."""
+    """Returns a canned retrieved context; index() is a no-op (no FAISS/BM25)."""
 
     def retrieve(self, job_id: str, query: str, current_slide: int) -> RetrievedContext:
         """Return a single canned chunk citing the current slide."""
@@ -221,6 +221,45 @@ class StubKB:
             chunks=[Chunk(chunk_id="c0", slide_index=current_slide, text="canned context")],
             sources=[current_slide],
         )
+
+    def index(self, job_id: str, slides) -> int:
+        """Pretend to index; return the chunk count (= number of slides here)."""
+        return len(slides)
+
+
+class StubSlideProcessor:
+    """Stub for SlideProcessor: canned extraction + script generation (no pptx/LLM).
+
+    Lets the FastAPI control-plane flow (upload → build) be tested without a real
+    .pptx file, python-pptx, or LLM calls.
+    """
+
+    def __init__(self, n_slides: int = 2):
+        """Configure how many canned slides extraction returns."""
+        self.n_slides = n_slides
+
+    def extract(self, pptx_path: str, job_dir: str) -> list[SlideContent]:
+        """Return canned SlideContent (ignores the uploaded file)."""
+        from models import SlideContent
+
+        return [
+            SlideContent(index=i, title=f"Slide {i}",
+                         body_text=f"This is the body text for slide {i} with some words.")
+            for i in range(self.n_slides)
+        ]
+
+    async def build_scripts(self, slides, word_budgets, persona, track, on_slide_done=None):
+        """Return canned per-slide scripts for one track (no LLM); fire progress."""
+        out = []
+        for s in slides:
+            sents = [
+                ScriptSentence(text=f"Narration for slide {s.index}, sentence one.", word_count=6),
+                ScriptSentence(text="And a second sentence here.", word_count=5),
+            ]
+            out.append(SlideScript(slide_index=s.index, track=track, sentences=sents))
+            if on_slide_done:
+                on_slide_done()
+        return out
 
 
 class FakeRegistry:
@@ -234,6 +273,14 @@ class FakeRegistry:
         self.intent = overrides.get("intent", StubIntent())
         self.llm = overrides.get("llm", StubLLM())
         self.kb = overrides.get("kb", StubKB())
+        self.slides = overrides.get("slides", StubSlideProcessor())
+
+    def is_ready(self) -> bool:
+        """Always ready (drives the /readyz probe in HTTP integration tests)."""
+        return True
+
+    async def aclose(self) -> None:
+        """No-op shutdown (matches the real registry's interface)."""
 
 
 # --------------------------------------------------------- builders / helpers
