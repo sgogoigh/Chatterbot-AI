@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+/*
+  Chatterbot-AI — "control room" design system.
+  Color encodes the agent's full-duplex state: amber = speaking (on air),
+  teal = listening. Deep blue-charcoal ground; mono face carries the clock/budget.
+  Palette is committed once here; everything derives from these tokens.
+*/
+:root {
+  --ground: #0e1116;   /* near-black, blue undertone (ink / control room) */
+  --panel: #171b22;    /* raised slate */
+  --panel-2: #1e232c;  /* elevated control */
+  --hairline: #2a313b; /* dividers / borders */
+  --text: #e8eaed;     /* soft off-white */
+  --muted: #8b94a2;    /* secondary text */
+  --faint: #5b636f;    /* tertiary / disabled */
+
+  --speak: #f2a33c;    /* amber — speaking / on air / primary brand */
+  --speak-soft: #f2a33c26;
+  --listen: #35c9c9;   /* teal — listening / good / on schedule */
+  --listen-soft: #35c9c926;
+  --over: #e5614b;     /* coral — over budget / danger */
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-hairline: var(--hairline);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-speak: var(--speak);
+  --color-listen: var(--listen);
+  --color-over: var(--over);
+
+  --font-display: var(--font-display), "Space Grotesk", system-ui, sans-serif;
+  --font-sans: var(--font-sans), "Inter", system-ui, sans-serif;
+  --font-mono: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  /* faint control-room atmosphere: two low-intensity radial pools, kept subtle */
+  background-image:
+    radial-gradient(60rem 60rem at 12% -10%, #f2a33c0a, transparent 60%),
+    radial-gradient(50rem 50rem at 100% 0%, #35c9c90a, transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Eyebrow / label utility: mono, tracked-out, used for structural labels */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Surfaces */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 1rem;
+}
+
+/* Focus visibility (a11y) */
+:where(button, a, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--speak);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
+}
+
+/* Custom range slider (duration dial) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--hairline);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--speak);
+  border: 3px solid var(--ground);
+  box-shadow: 0 0 0 1px var(--speak), 0 0 16px var(--speak-soft);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--ground);
+  border-radius: 50%;
+  background: var(--speak);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .rise { animation: none; }
+}
