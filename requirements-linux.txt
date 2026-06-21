@@ -1,0 +1,9 @@
+# Chatterbot-AI — Linux/container-only extras (installed on top of requirements.txt).
+# These do not have Windows wheels; see WINDOWS_TESTING.md / ERRORS.md R12.
+#
+#   pip install -r requirements.txt -r requirements-linux.txt
+#
+# Used by the Docker image (deployment target). On Windows, TTS uses edge-tts and
+# slide rasterization degrades gracefully without these.
+
+piper-tts==1.2.*                 # Piper VITS TTS (piper-phonemize: Linux/macOS only)

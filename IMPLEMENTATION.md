@@ -72,11 +72,11 @@ livekit-agents==0.12.*           # agent worker framework
 livekit-api==0.7.*               # AccessToken / room admin
 
 # ---- ML / audio ----
-torch==2.2.*                     # Silero VAD via torch.hub (CPU build)
-onnxruntime==1.18.*              # Silero VAD ONNX path (preferred, see §10)
-faster-whisper==1.0.*            # CTranslate2 INT8 ASR
-sentence-transformers==2.7.*     # all-MiniLM-L6-v2 embeddings
-piper-tts==1.2.*                 # Piper VITS TTS
+onnxruntime==1.18.*              # Silero VAD inference (pure ONNX path, §10)
+silero-vad>=5.1                  # bundles the Silero v5 .onnx (loaded via onnxruntime, NOT torch.hub)
+faster-whisper==1.0.*            # CTranslate2 INT8 ASR (no torch)
+sentence-transformers==2.7.*     # all-MiniLM-L6-v2 embeddings (pulls torch transitively)
+piper-tts==1.2.*                 # Piper VITS TTS — ⚠️ Linux/macOS only (R12); no Windows wheel
 numpy==1.26.*
 scipy==1.13.*                    # resampling (signal.resample_poly)
 soundfile==0.12.*                # WAV read/write
@@ -524,7 +524,7 @@ async def _on_utterance(self, audio: np.ndarray):
 
 `services/vad_service.py`.
 
-- **Model:** Silero VAD. 🔧 **Decision:** prefer the **ONNX** model via `onnxruntime` over `torch.hub` — it's the path that yields the doc's sub-millisecond latency and avoids loading the full torch graph for a 1 MB model. (torch is still a dependency for faster-whisper's ecosystem and as a fallback loader.)
+- **Model:** Silero VAD. 🔧 **Decision (validated):** load the **ONNX** model and run it via **`onnxruntime`** directly — no `torch.hub`, no `torchaudio`. The `.onnx` is sourced from the `silero-vad` pip package's bundled `data/` dir, located via `importlib.util.find_spec` **without importing the package** (its `__init__` imports `torchaudio`, which we avoid). This is the path that yields sub-millisecond latency. ✅ Measured **0.19–0.20 ms** mean on the dev machine — beats the doc's 0.25–0.34 ms. *(Originally drafted against `torch.hub(..., onnx=True)`, which transitively requires `torchaudio` and failed at validation — see R6/R12; corrected to pure onnxruntime.)*
 - **Contract:** `probability(frame_f32_512) -> float` — one Silero forward pass per 512-sample (32 ms @ 16 kHz) chunk. Silero is **stateful** (LSTM); keep the hidden state across calls within one stream and reset on session start.
 - **Framing:** the input loop must hand exactly 512 samples per call (Silero v4/v5 requirement at 16 kHz). `SpeechBuffer` re-chunks the incoming `AudioFrame`s to 512.
 
@@ -942,6 +942,23 @@ This section is the deliverable's "rechecks for mistakes / gaps." Each item is a
 | **R-intent** | Acceptance gap | Intent accuracy 89.9% < 95% gate (PARTIAL in doc). | Hybrid rules + embeddings; expanded prototypes; LR-head fallback; §13. |
 | **R-hybrid** | Spec contradiction | RAG described as both FAISS-only and BM25+embedding. | Implement hybrid (FAISS + BM25 via RRF) + current-slide boost; §17.1. |
 | **R-persona** | Spec gap | Persona vs Track relationship undefined. | Persona = WPM/buffer; Track = verbosity variant; they compose; §15.1. |
+| **R12** | **Platform gap (found at validation)** | `piper-tts` → `piper-phonemize` has **no Windows wheel** (Linux/macOS-only C++/espeak-ng ext). Blocks local Windows installs. | Piper runs in the Linux Docker image (deployment target). For local Windows dev, install everything except `piper-tts`; validate TTS in-container. Documented in backend/README. |
+| **R1-fix** | **Dependency conflict (found at validation)** | `livekit==0.17.*` pin conflicts with `livekit-agents` (needs `livekit>=0.18.1`). | Don't hard-pin `livekit`; let `livekit-agents>=0.12,<0.13` resolve a compatible rtc SDK (`livekit>=0.18,<1`). Fixed in requirements.txt + §2.2. |
+| **R6-fix** | **Bug (found at validation)** | VAD drafted via `torch.hub(onnx=True)` transitively needs `torchaudio` (not in reqs) → import crash. | Rewrote `VADService` to pure onnxruntime over the `silero-vad`-bundled `.onnx` (located without importing the package). No torch.hub/torchaudio. Validated 0.2 ms. §10. |
+
+### Validation status (local venv, Python 3.12 / Windows)
+Ran `backend/tests/validate_ml.py` against real model weights:
+
+| Service | Result | Note |
+|---------|--------|------|
+| Embeddings (MiniLM) | ✅ PASS | dim=384, normalised |
+| VAD (Silero, onnxruntime) | ✅ PASS | 0.20 ms mean latency (target <5 ms) |
+| STT (Faster-Whisper small.en) | ✅ PASS | loads + transcribes (CTranslate2 INT8) |
+| Intent (hybrid rule+embedding) | ✅ PASS | **100%** on the smoke cases incl. GOTO parsing |
+| RAG (FAISS + BM25 hybrid) | ✅ PASS | indexes + cites correct sources |
+| TTS (Piper) | ⏭ DEFERRED | Linux container only (R12) |
+
+`pytest tests/` in the venv: **30 passed, 1 skipped** (e2e placeholder).
 
 **Still open for the user (decisions, not blockers):**
 - Self-hosted LiveKit server vs. LiveKit Cloud (affects compose + ops).

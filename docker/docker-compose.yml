@@ -1,0 +1,36 @@
+# Chatterbot-AI orchestration (IMPLEMENTATION.md §22.2).
+# Single-instance backend + optional self-hosted LiveKit + optional Ollama fallback.
+# Use LiveKit Cloud instead by dropping the `livekit` service and pointing
+# CB_LIVEKIT_URL at the cloud endpoint.
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../backend/.env
+    volumes:
+      - ../data:/app/data        # job artifacts (slides, scripts, RAG indexes)
+      - ./models:/models         # model cache (avoids re-downloading ~500MB)
+    depends_on:
+      - livekit
+
+  # Self-hosted WebRTC signaling/media (omit if using LiveKit Cloud).
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev          # dev mode; supply a config + keys for production
+    ports:
+      - "7880:7880"         # signaling (ws)
+      - "7881:7881"         # rtc/tcp
+      - "7882:7882/udp"     # rtc/udp
+
+  # Optional local LLM fallback (IMPLEMENTATION.md §18.3). Uncomment to enable.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./ollama:/root/.ollama
