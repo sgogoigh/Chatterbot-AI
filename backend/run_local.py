@@ -151,7 +151,7 @@ async def live() -> int:
     print("Listening on your mic. Try: interrupt while it talks, ask "
           "'what was the revenue?', say 'next slide' or 'stop'. Ctrl+C to quit.\n")
     try:
-        await worker.run(setup=False)
+        await worker.run()
     except KeyboardInterrupt:
         pass
     finally:

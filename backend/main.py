@@ -17,7 +17,6 @@ exercise upload/build/RAG without a media server.
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,10 +32,12 @@ log = get_logger(component="main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models, warm them, start the agent worker; tear down on shutdown (§6).
+    """Load + warm models once; tear down on shutdown (§6).
 
-    Stored on ``app.state.registry`` so routes (via Request) and the agent worker
-    share the exact same singletons.
+    Stored on ``app.state.registry`` so routes and the per-session voice agents
+    share the exact same singletons. The agent is NOT started here — it is
+    dispatched per session by ``POST /api/sessions`` (core/agent_session.py),
+    which joins the session's LiveKit room directly.
     """
     settings = get_settings()
     setup_logging(settings.log_level)
@@ -48,58 +49,11 @@ async def lifespan(app: FastAPI):
     app.state.registry = registry
     log.info("models loaded + warmed; backend ready")
 
-    # Start the in-process LiveKit agent worker (best-effort; §8.2).
-    app.state.agent_task = asyncio.create_task(_run_agent_worker(settings, registry))
-
     try:
         yield
     finally:
         log.info("shutting down...")
-        app.state.agent_task.cancel()
         await registry.aclose()
-
-
-async def _run_agent_worker(settings, registry) -> None:
-    """Run the LiveKit Agents worker in-process (integration seam, §8.2).
-
-    Wraps the (version-sensitive) LiveKit Agents bootstrap. If LiveKit isn't
-    configured or the framework API differs from the pinned version, this logs a
-    warning and returns — the REST control plane keeps working so the rest of the
-    system is still exercisable. The actual per-session loop lives in
-    :class:`ChatterbotAgentWorker` (§9); ``entrypoint`` adapts a JobContext to it.
-    """
-    if not settings.livekit_url or not settings.livekit_api_key:
-        log.warning("LiveKit not configured; agent worker disabled (REST API only)")
-        return
-    try:
-        from livekit.agents import JobContext, WorkerOptions, cli  # noqa: F401
-
-        async def entrypoint(ctx: "JobContext") -> None:
-            """Adapt a dispatched LiveKit job to a ChatterbotAgentWorker run.
-
-            Looks up the prepared SessionState for the room and drives the
-            full-duplex loops. The room<->session mapping is established when the
-            session is created (§8.2).
-            """
-            from app_state import sessions
-            from core.agent_worker import ChatterbotAgentWorker
-
-            await ctx.connect()
-            # Map room -> session: the room name carries the session id suffix.
-            session_id = ctx.room.name.split("-")[-1]
-            state = sessions.get(session_id)
-            if state is None:
-                log.warning(f"no session for room {ctx.room.name}; ignoring job")
-                return
-            worker = ChatterbotAgentWorker(ctx, registry, settings, state)
-            await worker.run()
-
-        # NOTE: depending on the pinned livekit-agents version, the worker is
-        # launched via cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint)) in a
-        # dedicated process, or dispatched programmatically. Kept as a seam here.
-        log.info("LiveKit agent entrypoint registered")
-    except Exception as e:  # noqa: BLE001 - never crash the app over agent bootstrap
-        log.warning(f"agent worker bootstrap failed (REST API still up): {e}")
 
 
 def create_app() -> FastAPI:

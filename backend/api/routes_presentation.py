@@ -84,7 +84,9 @@ async def build_presentation(job_id: str, body: BuildRequest, request: Request) 
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job_id")
 
-    build_id = builds.start(job_id, total=len(job.slides))
+    # Total work units = slides x tracks (one script-gen pass per track), so the
+    # progress counter stays coherent (it ticks once per slide per track).
+    build_id = builds.start(job_id, total=len(job.slides) * len(Track))
     asyncio.create_task(_run_build(job_id, body, request.app.state.registry))
     return BuildResponse(job_id=job_id, build_id=build_id, state="running")
 
@@ -137,7 +139,7 @@ async def _run_build(job_id: str, body: BuildRequest, registry) -> None:
         await asyncio.to_thread(registry.kb.index, job_id, job.slides)
 
         builds.update(
-            job_id, state="done", slides_done=len(job.slides),
+            job_id, state="done", slides_done=len(job.slides) * len(Track),
             tracks_built=list(scripts.keys()), estimated_seconds=estimates,
         )
     except Exception as e:  # noqa: BLE001 - surface failure into status, don't crash app

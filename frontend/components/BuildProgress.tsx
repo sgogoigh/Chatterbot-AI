@@ -59,7 +59,7 @@ export default function BuildProgress({
 
       <div className="mt-10">
         <div className="mb-2 flex items-center justify-between font-mono text-sm">
-          <span className="text-muted">slides scripted</span>
+          <span className="text-muted">scripts written</span>
           <span className="text-speak tabular-nums">
             {done} / {total || "…"}
           </span>

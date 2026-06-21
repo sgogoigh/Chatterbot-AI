@@ -30,6 +30,9 @@ def app(tmp_path, monkeypatch):
     a temp dir, and the in-memory session store is cleared for isolation.
     """
     monkeypatch.setenv("CB_DATA_DIR", str(tmp_path))
+    # Disable real LiveKit agent dispatch during HTTP tests (no network); the agent
+    # session is verified separately against the live LiveKit Cloud.
+    monkeypatch.setenv("CB_LIVEKIT_URL", "")
     from config import get_settings
 
     get_settings.cache_clear()
@@ -105,7 +108,7 @@ async def test_full_control_plane_flow(app):
             await asyncio.sleep(0.02)
         assert s["state"] == "done"
         assert set(s["tracks_built"]) == {"STANDARD", "SUMMARY", "TURBO"}
-        assert s["slides_done"] == 2
+        assert s["slides_done"] == 6  # 2 slides x 3 tracks (work units)
 
         # slides metadata
         r = await ac.get(f"/api/presentations/{job_id}/slides")

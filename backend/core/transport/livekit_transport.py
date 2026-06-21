@@ -1,14 +1,15 @@
 """
-core/transport/livekit_transport.py — LiveKit WebRTC transport (§3.2, W3).
+core/transport/livekit_transport.py — LiveKit WebRTC transport (W3 live voice).
 
-The ONLY module that imports `livekit.rtc`. Adapts a connected LiveKit room to the
-agent's audio contract: inbound participant mic → float32 16 kHz frames; outbound
-synthesized chunks → rtc.AudioFrame on a published track; barge-in → clear_queue.
+The ONLY module that imports `livekit.rtc`. Bridges a connected LiveKit room to
+the agent's audio contract:
+  * INPUT  — the remote participant's mic track -> float32 mono 16 kHz frames
+  * OUTPUT — synthesized chunks -> an rtc.AudioFrame on the agent's published track
+  * stop() — barge-in: clears the AudioSource queue (drops buffered TTS at once)
 
-⚠️ This is the version-sensitive seam (R5). It is exercised/finalized in W3
-(real LiveKit Cloud + a browser/Playground client); the local/file transports do
-not touch it. Kept importable so the FastAPI agent bootstrap works when LiveKit is
-configured.
+The room is created/connected/published by core/agent_session.py; this class is
+fed the room + output AudioSource and is told which remote track to read once it
+is subscribed (event-driven, since the user may join before or after the agent).
 """
 
 from __future__ import annotations
@@ -23,70 +24,69 @@ from utils.logging import get_logger
 log = get_logger(component="livekit-transport")
 
 
-class LiveKitTransport:
-    """Bridges a LiveKit room to the agent's input-iterator / output-sink contract."""
+class LiveKitRoomTransport:
+    """Adapts a live rtc.Room (+ output AudioSource) to the agent's I/O contract."""
 
-    def __init__(self, ctx, in_sr: int = 16000, out_sr: int = 24000):
-        """Bind to a connected LiveKit JobContext; record in/out sample rates."""
-        self.ctx = ctx
+    def __init__(self, room, source, in_sr: int, out_sr: int):
+        """Bind to a connected room and the agent's published AudioSource.
+
+        ``in_sr`` is the canonical VAD/STT rate (16 kHz); ``out_sr`` is the TTS
+        native rate. The remote mic track is supplied later via
+        :meth:`set_input_track` when the room fires ``track_subscribed``.
+        """
+        self.room = room
+        self.source = source
         self.in_sr = in_sr
         self.out_sr = out_sr
-        self._source = None        # rtc.AudioSource (outbound)
-        self._stream = None        # rtc.AudioStream (inbound)
+        self._track = None
+        self._track_ready = asyncio.Event()
 
-    async def start(self) -> None:
-        """Publish the agent's output track and subscribe to the participant's mic.
-
-        Waits briefly for a remote audio track to appear (single-user assumption).
-        The exact subscription/event API is version-sensitive — validate in W3.
-        """
-        from livekit import rtc
-
-        self._source = rtc.AudioSource(self.out_sr, 1)
-        track = rtc.LocalAudioTrack.create_audio_track("chatterbot", self._source)
-        await self.ctx.room.local_participant.publish_track(track)
-
-        remote = await self._await_remote_audio_track()
-        self._stream = rtc.AudioStream(remote, sample_rate=self.in_sr, num_channels=1)
-        log.info("livekit transport started")
-
-    async def _await_remote_audio_track(self, timeout: float = 30.0):
-        """Return the first remote audio track, waiting up to ``timeout`` for one."""
-        deadline = timeout
-        while deadline > 0:
-            for p in self.ctx.room.remote_participants.values():
-                for pub in p.track_publications.values():
-                    if pub.track is not None:
-                        return pub.track
-            await asyncio.sleep(0.25)
-            deadline -= 0.25
-        raise TimeoutError("no remote audio track appeared")
+    def set_input_track(self, track) -> None:
+        """Register the remote audio track to listen on (called from the room event)."""
+        if self._track is None:
+            self._track = track
+            self._track_ready.set()
+            log.info("input track attached")
 
     def __aiter__(self):
-        """Return an async iterator of inbound float32 16 kHz frames."""
-        return self._iter_frames()
+        """Return the async generator of inbound float32 16 kHz frames."""
+        return self._frames()
 
-    async def _iter_frames(self):
-        """Yield float32 mono frames decoded from the inbound rtc AudioStream."""
-        async for event in self._stream:
-            frame = getattr(event, "frame", event)        # AudioFrameEvent.frame or frame
+    async def _frames(self):
+        """Yield float32 mono frames from the remote mic, once a track is available.
+
+        Waits for the first subscribed audio track, then streams it via
+        rtc.AudioStream resampled to ``in_sr``. The agent can narrate (output)
+        while this is still waiting for the user to speak.
+        """
+        await self._track_ready.wait()
+        from livekit import rtc
+
+        stream = rtc.AudioStream(self._track, sample_rate=self.in_sr, num_channels=1)
+        async for event in stream:
+            frame = getattr(event, "frame", event)
             pcm = np.frombuffer(frame.data, dtype=np.int16)
             yield int16_to_float32(pcm)
 
     async def play(self, samples: np.ndarray, sample_rate: int) -> None:
-        """Push one float32 chunk to the published track as an rtc.AudioFrame."""
+        """Push one float32 chunk to the agent's published track as an rtc.AudioFrame."""
         from livekit import rtc
 
         frame = rtc.AudioFrame(
             data=float32_to_int16(samples).tobytes(),
-            sample_rate=sample_rate, num_channels=1, samples_per_channel=len(samples),
+            sample_rate=sample_rate,
+            num_channels=1,
+            samples_per_channel=len(samples),
         )
-        await self._source.capture_frame(frame)
+        await self.source.capture_frame(frame)
 
     async def stop(self) -> None:
-        """Barge-in: drop queued outbound audio on the source."""
-        if self._source is not None:
-            await self._source.clear_queue()
+        """Barge-in: drop queued outbound audio so playback halts immediately."""
+        self.source.clear_queue()
 
     async def aclose(self) -> None:
-        """No-op; the room lifecycle is owned by the LiveKit job context."""
+        """Release the output source (room disconnect is handled by the session)."""
+        try:
+            await self.source.aclose()
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            pass

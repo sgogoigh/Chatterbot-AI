@@ -129,7 +129,8 @@ assertion. IDs reused across tiers.
 | S11 | Long question (>2 s) handled | 2 | — | utterance capped at `stt_max_utterance_ms`; completes (R3) | ⏳ T2 |
 | S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides | ⏳ T2 |
 | S13 | Upload → build (3 tracks) → status → session | HTTP | control | build completes; 3 tracks; navigate/status work | ✅ API |
-| S14 | Full WebRTC round-trip (publish WAV, hear agent) | 3 | all | audio frames received on the client track | ⏳ T3 (W3) |
+| S14 | Agent joins LiveKit room + streams narration to a participant | 3 | all | agent dispatched, track subscribed, audio frames received | ✅ live (agent→participant) |
+| S14b | Participant mic → agent answer round-trip | 3 | all | agent transcribes published mic + answers | ⏳ needs browser mic |
 
 ✅ T1 = `tests/test_agent_e2e.py` (12). ✅ API = `tests/test_api_integration.py` (8,
 real HTTP via httpx ASGITransport). Full Windows pipeline verified by

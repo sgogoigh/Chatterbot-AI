@@ -458,7 +458,8 @@ Documented as an **8-week, 4-phase** plan.
 2. **Reduce STT-dominated E2E latency (~1.5 s).** Streaming/chunked Whisper decoding, smaller/quantized variants, or partial-hypothesis early routing. (Doc lists optional GPU offload as future work, but CPU-only is a core constraint.)
 3. **Confirm hybrid retrieval.** Doc states both "FAISS semantic search" (module §5.1.7) and "hybrid BM25 + embedding" (RAG gap, ch.6). Decide whether the first release ships pure-embedding or true hybrid BM25+embedding.
 4. **Personas vs. tracks.** Clarify the relationship between personas (GENERAL/TEACHER/MEETING/TEDX) and pacing tracks (STANDARD/SUMMARY/TURBO) in the budget model.
-5. **LLM model choice.** Doc mentions both "Llama 3 70B" (feasibility) and a generic "Groq-backed LLM / Llama." Pin the exact model + the Ollama fallback model.
+5. **LLM model choice.** Doc mentions 
+both "Llama 3 70B" (feasibility) and a generic "Groq-backed LLM / Llama." Pin the exact model + the Ollama fallback model.
 
 > **Open questions for the user before build:** scope of "improvements" implied by the rename; whether multilingual / GPU / hybrid-BM25 move from "future work" into v1; target hardware for the improved build.
 

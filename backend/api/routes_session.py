@@ -14,12 +14,14 @@ router manages the control-plane state and hands the browser its join token.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
 from app_state import jobs, sessions
+from core.agent_session import run_agent_session
 from config import get_settings
 from core.pacing import PERSONA_PROFILES
 from core.playback_tracker import PlaybackTracker
@@ -56,13 +58,15 @@ def _mint_join_token(settings, room: str, identity: str) -> str:
 
 
 @router.post("", response_model=StartSessionResponse)
-async def start_session(body: StartSessionRequest) -> StartSessionResponse:
-    """Create a live session for a built job and return LiveKit join details.
+async def start_session(body: StartSessionRequest, request: Request) -> StartSessionResponse:
+    """Create a live session, dispatch the voice agent into its room, and return
+    the browser's LiveKit join details.
 
     Enforces the single-concurrent-presentation constraint (doc), builds the
-    initial SessionState (current slide 0, STANDARD track, tracker over the first
-    slide's sentences), and mints the browser's join token. The agent worker
-    attaches to the same room once the browser connects (§8.2).
+    initial SessionState, mints the user's join token, and launches the agent
+    (`run_agent_session`) as a background task so it joins the SAME room and runs
+    the full-duplex loop. When the browser then connects with its token and
+    publishes the mic, the loop completes end-to-end.
     """
     settings = get_settings()
     job = jobs.get(body.job_id)
@@ -86,10 +90,21 @@ async def start_session(body: StartSessionRequest) -> StartSessionResponse:
     )
     sessions.put(session_id, state)
 
-    token = _mint_join_token(settings, room_name, identity="user")
+    user_token = _mint_join_token(settings, room_name, identity="user")
+
+    # Dispatch the agent into the room (only when LiveKit is configured + models
+    # are ready). The browser hears it once it joins with user_token.
+    registry = getattr(request.app.state, "registry", None)
+    if settings.livekit_url and registry is not None and getattr(registry, "tts", None):
+        agent_token = _mint_join_token(settings, room_name, identity="chatterbot-agent")
+        task = asyncio.create_task(
+            run_agent_session(settings, registry, state, room_name, agent_token)
+        )
+        sessions.set_task(session_id, task)
+
     return StartSessionResponse(
         session_id=session_id, room_name=room_name,
-        livekit_url=settings.livekit_url, token=token,
+        livekit_url=settings.livekit_url, token=user_token,
     )
 
 

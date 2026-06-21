@@ -157,9 +157,21 @@ ANSWER -> 'Our revenue this quarter was four million dollars, which is a
 SELFTEST PASS
 ```
 
-## 8. Still requiring a browser/extra step (not blockers)
-- **W3 (real WebRTC):** `livekit_transport.py` is implemented but unexercised; to
-  validate, run the agent against your LiveKit Cloud and join via the LiveKit
-  **Agents Playground** (browser) — the only remaining "needs a client" piece, and
-  it runs on Windows. The local-audio path already covers the full logic without it.
-- **Live mic test:** needs a working microphone on the machine running `run_local.py`.
+## 8. W3 (real WebRTC) — WIRED & VERIFIED (agent→participant)
+The voice agent is now **dispatched automatically** when a session starts:
+`POST /api/sessions` launches `core/agent_session.py`, which joins the session's
+LiveKit Cloud room as `chatterbot-agent`, publishes its voice track, and runs the
+full-duplex loop. So the frontend's **"Go live" now completes** — the browser joins
+the same room and hears the agent.
+
+Verified live (headless) with `backend/tests/verify_livekit_agent.py`:
+```
+agent_seen=True  track_subscribed=True  audio_frames=27
+LIVEKIT AGENT DISPATCH PASS — agent joined the room and streamed narration to the participant.
+```
+
+**Still requires a real browser mic (can't be headless-tested here):** the
+participant **mic → agent answer** direction (S14b). The plumbing is in place
+(the agent subscribes to the participant's audio track and feeds it to VAD/STT);
+it just needs a human with a microphone clicking "Go live" to confirm the
+question→answer→resume round-trip live.

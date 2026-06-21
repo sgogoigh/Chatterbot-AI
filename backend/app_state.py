@@ -73,11 +73,12 @@ class BuildStore:
 
 
 class SessionManager:
-    """Holds live sessions; enforces the single-concurrent-presentation rule (doc)."""
+    """Holds live sessions + their agent tasks; enforces single-concurrent-presentation."""
 
     def __init__(self) -> None:
-        """Create an empty session registry."""
+        """Create empty session + agent-task registries."""
         self._sessions: dict[str, object] = {}      # session_id -> SessionState
+        self._tasks: dict[str, object] = {}         # session_id -> asyncio.Task (agent)
 
     def put(self, session_id: str, state) -> None:
         """Register a live session's state object."""
@@ -87,9 +88,16 @@ class SessionManager:
         """Return the SessionState for ``session_id`` or None."""
         return self._sessions.get(session_id)
 
+    def set_task(self, session_id: str, task) -> None:
+        """Associate the running agent (LiveKit) task with a session for cancellation."""
+        self._tasks[session_id] = task
+
     def remove(self, session_id: str) -> None:
-        """Drop a session (graceful termination)."""
+        """Drop a session and cancel its agent task (graceful termination)."""
         self._sessions.pop(session_id, None)
+        task = self._tasks.pop(session_id, None)
+        if task is not None:
+            task.cancel()
 
     def active_count(self) -> int:
         """Number of live sessions (used to enforce the single-session constraint)."""

@@ -130,36 +130,19 @@ class ChatterbotAgentWorker:
         self.audio_out = None       # sink: async play(samples_f32, sr) + async stop()
         self._reframer = Reframer(settings.vad_frame_samples)
 
-    # ----------------------------------------------------------- audio setup
-    async def setup_audio(self) -> None:
-        """Wire ``audio_in``/``audio_out`` to a LiveKit transport (W3 path).
-
-        Delegates all LiveKit rtc specifics to ``LiveKitTransport`` (the only place
-        that imports rtc), keeping this worker transport-agnostic. For local/file
-        transports, ``audio_in``/``audio_out`` are assigned directly instead of
-        calling this method.
-        """
-        from core.transport.livekit_transport import LiveKitTransport
-
-        transport = LiveKitTransport(self.ctx, in_sr=self.s.sample_rate,
-                                     out_sr=self.reg.tts.native_sr)
-        await transport.start()
-        self.audio_in = transport
-        self.audio_out = transport
-
     # ------------------------------------------------------------------- run
-    async def run(self, setup: bool = True) -> None:
+    async def run(self) -> None:
         """Run the listener + speaker loops until the session ends.
 
-        When ``setup`` is True (LiveKit path) it first wires audio via
-        :meth:`setup_audio`; local/file transports set ``audio_in``/``audio_out``
-        beforehand and pass ``setup=False``. ``asyncio.gather`` runs both loops
-        concurrently.
+        ``audio_in`` (frame iterator) and ``audio_out`` (sink) must be assigned
+        before calling — by the LiveKit agent session (core/agent_session.py), the
+        local transport (run_local.py), or the test harness. ``asyncio.gather``
+        runs both loops concurrently.
         """
         import asyncio
 
-        if setup:
-            await self.setup_audio()
+        if self.audio_in is None or self.audio_out is None:
+            raise RuntimeError("audio_in/audio_out must be set before run()")
         self.state.phase = SessionPhase.READY
         await asyncio.gather(self._input_loop(), self._narration_loop())
 
