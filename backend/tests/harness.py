@@ -39,26 +39,16 @@ SR = 22050  # stub TTS native rate
 
 
 # ---------------------------------------------------------------- fake audio
-class FakeAudioFrame:
-    """Minimal stand-in for rtc.AudioFrame on the INBOUND path (has ``.data`` bytes)."""
-
-    def __init__(self, samples: np.ndarray):
-        """Wrap float32 samples as int16 little-endian bytes, like a real frame."""
-        from utils.audio import float32_to_int16
-
-        self.data = float32_to_int16(samples).tobytes()
-
-
 class FakeAudioStream:
-    """Async-iterable of inbound frames (replaces rtc.AudioStream).
+    """Async-iterable inbound transport: yields float32 mono frames (16 kHz).
 
-    Yields a finite, pre-built list of frames so the input loop terminates in tests
-    (a real stream is unbounded). Each ``__anext__`` yields the next frame then
-    stops, letting the worker's ``async for`` drain it.
+    Matches the transport contract (audio_in yields float32 arrays). Finite, so the
+    input loop terminates in tests; ``delay`` trickles frames so the listener and
+    speaker loops interleave realistically.
     """
 
-    def __init__(self, frames: list[FakeAudioFrame], delay: float = 0.0):
-        """Store the frame list; ``delay`` (s) trickles frames so loops interleave."""
+    def __init__(self, frames: list[np.ndarray], delay: float = 0.0):
+        """Store the float32 frame list; ``delay`` (s) paces iteration."""
         self._frames = frames
         self._delay = delay
 
@@ -67,8 +57,8 @@ class FakeAudioStream:
         self._i = 0
         return self
 
-    async def __anext__(self):
-        """Yield the next frame (after an optional delay) or stop when drained."""
+    async def __anext__(self) -> np.ndarray:
+        """Yield the next float32 frame (after an optional delay) or stop when drained."""
         if self._i >= len(self._frames):
             raise StopAsyncIteration
         if self._delay:
@@ -81,26 +71,27 @@ class FakeAudioStream:
 
 
 class FakeAudioSource:
-    """Records outbound audio activity instead of publishing to LiveKit.
+    """Outbound sink that records activity instead of playing audio.
 
-    Captures the number of frames/samples pushed and how many times the queue was
-    cleared (the interrupt signal), so tests can assert "audio was produced" and
-    "playback was aborted on barge-in" without real WebRTC.
+    Implements the sink contract (``play``/``stop``). Counts pushed frames/samples
+    and stop() calls so tests can assert "audio produced" and "playback aborted on
+    barge-in" without real devices. Counter names (frames/clear_calls) are kept
+    stable for the existing assertions.
     """
 
     def __init__(self):
-        """Initialise counters for pushed frames/samples and clear_queue calls."""
+        """Initialise counters for played frames/samples and stop (barge-in) calls."""
         self.frames = 0
         self.samples = 0
         self.clear_calls = 0
 
-    async def capture_frame(self, frame) -> None:
-        """Record one pushed frame (counts frame + its samples)."""
+    async def play(self, samples: np.ndarray, sample_rate: int) -> None:
+        """Record one played chunk (counts the chunk + its sample length)."""
         self.frames += 1
-        self.samples += getattr(frame, "samples_per_channel", 0)
+        self.samples += len(samples)
 
-    async def clear_queue(self) -> None:
-        """Record an interrupt-driven queue flush."""
+    async def stop(self) -> None:
+        """Record an interrupt-driven playback flush (barge-in)."""
         self.clear_calls += 1
 
 

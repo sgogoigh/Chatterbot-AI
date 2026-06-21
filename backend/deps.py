@@ -58,10 +58,14 @@ class ServiceRegistry:
         self.stt = await asyncio.to_thread(STTService, s)
 
     async def load_tts(self, s: Settings) -> None:
-        """Load the Piper TTS voice."""
-        from services.tts_service import TTSService
+        """Load the configured TTS backend (edge on Windows, piper in container).
 
-        self.tts = await asyncio.to_thread(TTSService, s)
+        Uses the factory so the backend is selectable via ``CB_TTS_BACKEND`` without
+        touching the rest of the app (WINDOWS_TESTING.md §3.1).
+        """
+        from services.tts_factory import make_tts
+
+        self.tts = await asyncio.to_thread(make_tts, s)
 
     async def load_all(self, s: Settings) -> None:
         """Load every heavy model concurrently, then wire the light dependents.

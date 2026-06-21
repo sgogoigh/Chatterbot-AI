@@ -33,7 +33,7 @@ from core.playback_tracker import PlaybackTracker
 from core.session_state import ResumePoint, SessionState
 from deps import ServiceRegistry
 from models import Intent, SessionPhase, Track
-from utils.audio import Reframer, float32_to_int16, int16_to_float32
+from utils.audio import Reframer
 from utils.logging import get_logger
 
 
@@ -112,67 +112,54 @@ class ChatterbotAgentWorker:
     """Per-session orchestrator running the full-duplex loops over a LiveKit room (§9)."""
 
     def __init__(self, ctx, registry: ServiceRegistry, settings: Settings, state: SessionState):
-        """Wire the worker to its LiveKit JobContext, shared services, and session state.
+        """Wire the worker to shared services, session state, and an audio transport.
 
-        ``ctx`` is the LiveKit Agents JobContext (already connected to the room).
-        Audio I/O handles (``audio_in`` async iterator, ``audio_out`` source) are
-        established in :meth:`setup_audio`. The exact LiveKit rtc API is version
-        sensitive (recheck R1/R5); the audio wiring is isolated to a few methods.
+        The worker is transport-agnostic (WINDOWS_TESTING.md §3.2): it reads
+        ``audio_in`` (an async iterable yielding float32 mono frames at the canonical
+        16 kHz) and writes to ``audio_out`` (a sink with ``async play(samples, sr)``
+        and ``async stop()``). These are set either by :meth:`setup_audio` (LiveKit)
+        or directly by run_local / the Tier-1 harness. ``ctx`` is the optional
+        LiveKit JobContext (None for local/file/test transports).
         """
         self.ctx = ctx
         self.reg = registry
         self.s = settings
         self.state = state
         self.log = get_logger(session_id=state.session_id, component="agent")
-        self.audio_in = None        # async iterator of inbound AudioFrames
-        self.audio_out = None       # rtc.AudioSource (outbound)
+        self.audio_in = None        # async iterable of float32 mono frames @ 16 kHz
+        self.audio_out = None       # sink: async play(samples_f32, sr) + async stop()
         self._reframer = Reframer(settings.vad_frame_samples)
 
     # ----------------------------------------------------------- audio setup
     async def setup_audio(self) -> None:
-        """Subscribe to the participant's mic and publish the agent's output track.
+        """Wire ``audio_in``/``audio_out`` to a LiveKit transport (W3 path).
 
-        Inbound: an AudioStream resampled to the canonical 16 kHz mono (VAD/STT).
-        Outbound: an AudioSource at the Piper voice's NATIVE rate (R4) — the two
-        streams are independent. This method localises every LiveKit rtc call so a
-        version bump only touches here.
+        Delegates all LiveKit rtc specifics to ``LiveKitTransport`` (the only place
+        that imports rtc), keeping this worker transport-agnostic. For local/file
+        transports, ``audio_in``/``audio_out`` are assigned directly instead of
+        calling this method.
         """
-        from livekit import rtc
+        from core.transport.livekit_transport import LiveKitTransport
 
-        out_sr = self.reg.tts.native_sr
-        self.audio_out = rtc.AudioSource(out_sr, 1)
-        track = rtc.LocalAudioTrack.create_audio_track("chatterbot", self.audio_out)
-        await self.ctx.room.local_participant.publish_track(track)
-
-        # Attach to the first remote audio track (single-user assumption, doc).
-        async for participant in self._iter_remote_audio_tracks():
-            self.audio_in = rtc.AudioStream(
-                participant, sample_rate=self.s.sample_rate, num_channels=1
-            )
-            break
-
-    async def _iter_remote_audio_tracks(self):
-        """Yield remote audio tracks as participants publish them.
-
-        Abstracted so the (version-sensitive) subscription mechanics are isolated.
-        In practice this awaits the room's track-subscribed events; kept minimal
-        here as the integration seam.
-        """
-        for participant in self.ctx.room.remote_participants.values():
-            for pub in participant.track_publications.values():
-                if pub.track is not None:
-                    yield pub.track
+        transport = LiveKitTransport(self.ctx, in_sr=self.s.sample_rate,
+                                     out_sr=self.reg.tts.native_sr)
+        await transport.start()
+        self.audio_in = transport
+        self.audio_out = transport
 
     # ------------------------------------------------------------------- run
-    async def run(self) -> None:
-        """Set up audio then run the listener + speaker loops until the session ends.
+    async def run(self, setup: bool = True) -> None:
+        """Run the listener + speaker loops until the session ends.
 
-        ``asyncio.gather`` runs both loops concurrently; this is the entry point
-        the LiveKit Agents ``entrypoint`` calls after connecting (§8.2).
+        When ``setup`` is True (LiveKit path) it first wires audio via
+        :meth:`setup_audio`; local/file transports set ``audio_in``/``audio_out``
+        beforehand and pass ``setup=False``. ``asyncio.gather`` runs both loops
+        concurrently.
         """
         import asyncio
 
-        await self.setup_audio()
+        if setup:
+            await self.setup_audio()
         self.state.phase = SessionPhase.READY
         await asyncio.gather(self._input_loop(), self._narration_loop())
 
@@ -188,9 +175,11 @@ class ChatterbotAgentWorker:
 
         buf = SpeechBuffer(self.s)
         self.reg.vad.reset()
-        async for frame in self.audio_in:
-            pcm = np.frombuffer(frame.data, dtype=np.int16)
-            for chunk in self._reframer.push(int16_to_float32(pcm)):
+        # audio_in yields float32 mono frames already at the canonical 16 kHz; the
+        # transport handles any device/codec conversion. Reframer slices them into
+        # the exact 512-sample frames Silero requires.
+        async for samples in self.audio_in:
+            for chunk in self._reframer.push(samples):
                 prob = self.reg.vad.probability(chunk)
                 buf.update(chunk, prob)
                 if buf.just_started_speech() and self.state.phase == SessionPhase.SPEAKING:
@@ -245,18 +234,17 @@ class ChatterbotAgentWorker:
         """
         import asyncio
 
-        from livekit import rtc
-
         self.state.interrupt_event.clear()
         idx = self.state.current_sentence              # the sentence we are about to speak
         self.state.tracker.seek_to_sentence(idx)       # cursor at its start (sample bookkeeping)
         sent_samples = 0
+        sr = self.reg.tts.native_sr
         # synthesize_stream is a blocking generator; pull it via a thread so the
         # event loop (and interrupt checking) keeps running.
         chunks = await asyncio.to_thread(lambda: list(self.reg.tts.synthesize_stream(sentence.text)))
         for chunk in chunks:
             if self.state.interrupt_event.is_set():
-                await self.audio_out.clear_queue()      # drop buffered TTS now
+                await self.audio_out.stop()             # drop buffered TTS now (barge-in)
                 # Resume at the sentence we were speaking — NOT the next one. We do
                 # NOT advance current_sentence, so _resume()/_next_sentence() will
                 # re-deliver this exact sentence from its start (100% recovery).
@@ -266,13 +254,7 @@ class ChatterbotAgentWorker:
                     sentence_index=idx,
                 )
                 return
-            frame = rtc.AudioFrame(
-                data=float32_to_int16(chunk).tobytes(),
-                sample_rate=self.reg.tts.native_sr,
-                num_channels=1,
-                samples_per_channel=len(chunk),
-            )
-            await self.audio_out.capture_frame(frame)
+            await self.audio_out.play(chunk, sr)
             self.state.tracker.on_frames_pushed(len(chunk))
             sent_samples += len(chunk)
         # Full sentence delivered: record its exact length and advance the cursor.
@@ -322,19 +304,12 @@ class ChatterbotAgentWorker:
         Simpler than :meth:`_speak_sentence` — answers are not part of the tracked
         narration script, so no resume bookkeeping is needed.
         """
-        from livekit import rtc
-
         import asyncio
 
+        sr = self.reg.tts.native_sr
         chunks = await asyncio.to_thread(lambda: list(self.reg.tts.synthesize_stream(text)))
         for chunk in chunks:
-            frame = rtc.AudioFrame(
-                data=float32_to_int16(chunk).tobytes(),
-                sample_rate=self.reg.tts.native_sr,
-                num_channels=1,
-                samples_per_channel=len(chunk),
-            )
-            await self.audio_out.capture_frame(frame)
+            await self.audio_out.play(chunk, sr)
 
     # ------------------------------------------------------ action helpers
     def _navigate(self, intent: Intent, slide_no: int | None) -> None:

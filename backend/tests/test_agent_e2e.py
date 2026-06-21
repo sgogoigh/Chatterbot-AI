@@ -25,7 +25,6 @@ import numpy as np
 import pytest
 
 from tests.harness import (
-    FakeAudioFrame,
     FakeAudioStream,
     FakeRegistry,
     InterruptingTTS,
@@ -217,9 +216,9 @@ async def test_sfull_loops_together_bargein_and_complete():
     n = s.vad_frame_samples
     # quiet (let narration start) → loud burst (speech) → long silence (utterance end)
     frames = (
-        [FakeAudioFrame(quiet_frame(n)) for _ in range(5)]
-        + [FakeAudioFrame(loud_frame(n)) for _ in range(8)]
-        + [FakeAudioFrame(quiet_frame(n)) for _ in range(25)]
+        [quiet_frame(n) for _ in range(5)]
+        + [loud_frame(n) for _ in range(8)]
+        + [quiet_frame(n) for _ in range(25)]
     )
     reg = FakeRegistry(
         intent=StubIntent([(Intent.QUESTION, None)]),

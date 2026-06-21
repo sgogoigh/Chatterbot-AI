@@ -1,6 +1,7 @@
-# Chatterbot-AI backend dependencies
-# See IMPLEMENTATION.md §2.2. Pins are current minor lines (doc's 2023 pins
-# were bumped — recheck R1). Lock exact versions in CI after first green build.
+# Chatterbot-AI backend dependencies (CROSS-PLATFORM — installs on Windows).
+# See IMPLEMENTATION.md §2.2 and WINDOWS_TESTING.md. Pins are current minor lines.
+# NOTE: Piper TTS (piper-phonemize) has no Windows wheel (R12), so it lives in
+# requirements-linux.txt (container only). On Windows, TTS uses edge-tts.
 
 # ---- web / async ----
 fastapi==0.115.*
@@ -24,10 +25,14 @@ faster-whisper==1.0.*            # CTranslate2 INT8 ASR (no torch; uses CTransla
 # NOTE: torch is NOT pinned directly — VAD no longer needs it. It is still pulled
 # transitively by sentence-transformers (embeddings). CPU build is fine.
 sentence-transformers==2.7.*     # all-MiniLM-L6-v2 embeddings
-piper-tts==1.2.*                 # Piper VITS TTS
 numpy==1.26.*
 scipy==1.13.*                    # resampling (signal.resample_poly)
 soundfile==0.12.*                # WAV read/write
+
+# ---- TTS + local audio (Windows-friendly; replaces Piper on Windows) ----
+edge-tts>=7                      # Microsoft Edge neural TTS (free, cross-platform)
+miniaudio>=1.59                  # decode edge-tts mp3 -> PCM (Windows wheels)
+sounddevice>=0.5                 # local mic/speaker I/O for run_local.py
 
 # ---- RAG ----
 faiss-cpu==1.8.*

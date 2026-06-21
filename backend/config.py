@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,11 +52,31 @@ class Settings(BaseSettings):
     minilm_model: str = "all-MiniLM-L6-v2"
     piper_voice: str = "en_US-lessac-medium"
     piper_quality: str = "medium"       # x_low | low | medium | high
-    models_dir: str = "/models"
+    # Default to a project-local cache so it works on Windows out of the box
+    # (the container overrides this to /models via env).
+    models_dir: str = "models"
+
+    # --------------------------------------------------------------- TTS / STT
+    # Pluggable backends so the pipeline runs on Windows where Piper (pip) won't
+    # install (R12). "auto" => edge on Windows, piper elsewhere. See WINDOWS_TESTING.md.
+    tts_backend: str = "auto"           # auto | edge | groq | piper | piper_exe | pyttsx3
+    edge_tts_voice: str = "en-US-AriaNeural"
+    groq_tts_model: str = "canopylabs/orpheus-v1-english"
+    groq_tts_voice: str = "auto"
+    piper_exe_path: str = ""            # path to piper.exe when tts_backend=piper_exe
+    stt_backend: str = "local"          # local (faster-whisper) | groq (whisper-large-v3-turbo)
+    groq_stt_model: str = "whisper-large-v3-turbo"
 
     # -------------------------------------------------------------------- LLM
-    groq_api_key: SecretStr | None = None
-    groq_model: str = "llama-3.3-70b-versatile"   # R7: model ids drift over time
+    # Accept both the CB_-prefixed name AND the conventional GROQ_API_KEY so an
+    # existing .env (e.g. from the Groq/LiveKit quickstarts) works unchanged.
+    groq_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("CB_GROQ_API_KEY", "GROQ_API_KEY")
+    )
+    groq_model: str = Field(                       # R7: model ids drift over time
+        default="llama-3.3-70b-versatile",
+        validation_alias=AliasChoices("CB_GROQ_MODEL", "GROQ_MODEL"),
+    )
     groq_base_url: str = "https://api.groq.com/openai/v1"
     llm_timeout_s: float = 20.0
     llm_max_answer_tokens: int = 300
@@ -64,9 +84,15 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
 
     # --------------------------------------------------------------- LiveKit
-    livekit_url: str = ""               # wss://...  (required for live sessions)
-    livekit_api_key: str = ""
-    livekit_api_secret: SecretStr | None = None
+    livekit_url: str = Field(
+        default="", validation_alias=AliasChoices("CB_LIVEKIT_URL", "LIVEKIT_URL")
+    )
+    livekit_api_key: str = Field(
+        default="", validation_alias=AliasChoices("CB_LIVEKIT_API_KEY", "LIVEKIT_API_KEY")
+    )
+    livekit_api_secret: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("CB_LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET")
+    )
 
     # -------------------------------------------------------------------- RAG
     rag_top_k: int = 5
@@ -87,11 +113,30 @@ class Settings(BaseSettings):
     max_upload_mb: int = 50
 
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_prefix="CB_",
         extra="ignore",
         case_sensitive=False,
     )
+
+
+def _find_env_files() -> list[str]:
+    """Return candidate .env paths, lowest- to highest-priority (later wins).
+
+    Looks for the repo-root ``.env`` (next to this package's parent) and a
+    ``backend/.env`` override, plus the CWD ``.env``. This makes config load the
+    same regardless of whether the process starts from the repo root or backend/
+    (the .env the user created lives at the repo root).
+    """
+    import os
+
+    here = os.path.dirname(os.path.abspath(__file__))      # .../backend
+    repo_root = os.path.dirname(here)                       # .../Chatterbot-AI
+    candidates = [
+        os.path.join(repo_root, ".env"),                   # repo-root .env (user's)
+        os.path.join(here, ".env"),                        # backend/.env override
+        ".env",                                            # CWD .env
+    ]
+    return [p for p in candidates if os.path.exists(p)]
 
 
 @lru_cache
@@ -100,7 +145,8 @@ def get_settings() -> Settings:
 
     Cached with ``lru_cache`` so configuration is parsed from the environment
     exactly once and shared everywhere (FastAPI ``Depends`` and the agent
-    worker both call this). Tests can clear the cache via
-    ``get_settings.cache_clear()``.
+    worker both call this). The .env file is located robustly via
+    :func:`_find_env_files` so it loads from the repo root regardless of CWD.
+    Tests can clear the cache via ``get_settings.cache_clear()``.
     """
-    return Settings()
+    return Settings(_env_file=_find_env_files() or None)
