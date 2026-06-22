@@ -52,10 +52,10 @@ class ServiceRegistry:
         self.vad = await asyncio.to_thread(VADService, s)
 
     async def load_stt(self, s: Settings) -> None:
-        """Load the Faster-Whisper STT model."""
-        from services.stt_service import STTService
+        """Load the configured STT backend (local Faster-Whisper or cloud Groq Whisper)."""
+        from services.stt_factory import make_stt
 
-        self.stt = await asyncio.to_thread(STTService, s)
+        self.stt = await asyncio.to_thread(make_stt, s)
 
     async def load_tts(self, s: Settings) -> None:
         """Load the configured TTS backend (edge on Windows, piper in container).

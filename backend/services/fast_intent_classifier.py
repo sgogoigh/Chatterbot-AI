@@ -72,20 +72,32 @@ class FastIntentClassifier:
     def classify(self, text: str) -> tuple[Intent, int | None]:
         """Classify ``text`` into one of 6 intents, plus a slide index for GOTO.
 
-        Order matters (§13.2): PREV is checked before NEXT so "go back" never
-        reads as a forward move; GOTO is checked via :func:`parse_goto` which
-        requires both a goto cue and a number. Only when no command rule fires do
-        we fall back to the embedding prototypes, and below ``threshold`` we use
-        the interrogative heuristic to split QUESTION from IGNORE. Returns
-        ``(intent, slide_index_or_None)``.
+        Order matters (§13.2). Real-voice testing showed command keywords leaking
+        into questions ("which regions are we expanding into **next**?", "...for the
+        **next** year?") — so the order is:
+          1. explicit slide jump (``go to slide N`` — strong signal, even if phrased
+             as a request);
+          2. **interrogatives short-circuit to QUESTION** so a command word that
+             merely appears inside a question doesn't hijack it;
+          3. imperative command rules (PREV before NEXT so "go back" never reads as
+             forward);
+          4. embedding-prototype fallback, with the interrogative heuristic splitting
+             QUESTION from IGNORE below ``threshold``.
+        Returns ``(intent, slide_index_or_None)``.
         """
         t = normalize(text)
         if not t:
             return Intent.IGNORE, None
 
-        # ---- 1) deterministic command rules (precision-first) ----
+        # ---- 1) explicit slide jump (unambiguous: a goto cue + a number) ----
         if (n := parse_goto(t)) is not None:
             return Intent.GOTO, n
+
+        # ---- 2) a question wins over command keywords embedded inside it ----
+        if looks_interrogative(t):
+            return Intent.QUESTION, None
+
+        # ---- 3) imperative command rules (precision-first) ----
         if RE_PREV.search(t):
             return Intent.PREV, None
         if RE_NEXT.search(t):

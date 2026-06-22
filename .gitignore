@@ -219,3 +219,7 @@ __marimo__/
 
 # Chatterbot-AI: downloaded model weights (large; auto-downloaded at runtime)
 models/
+
+# Testing materials
+test_assets/
+data/

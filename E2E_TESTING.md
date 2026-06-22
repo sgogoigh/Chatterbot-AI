@@ -130,7 +130,8 @@ assertion. IDs reused across tiers.
 | S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides | ⏳ T2 |
 | S13 | Upload → build (3 tracks) → status → session | HTTP | control | build completes; 3 tracks; navigate/status work | ✅ API |
 | S14 | Agent joins LiveKit room + streams narration to a participant | 3 | all | agent dispatched, track subscribed, audio frames received | ✅ live (agent→participant) |
-| S14b | Participant mic → agent answer round-trip | 3 | all | agent transcribes published mic + answers | ⏳ needs browser mic |
+| S14b | Real human voice → STT → intent → RAG → answer (per-clip) | clips | 3,6 | transcript + intent + grounded answer graded vs deck | ✅ 13/14 local · 14/14 Groq STT (`tests/run_clips.py`) |
+| S14c | Participant mic → agent answer over live WebRTC | 3 | all | agent transcribes published mic + answers | ⏳ needs browser mic |
 
 ✅ T1 = `tests/test_agent_e2e.py` (12). ✅ API = `tests/test_api_integration.py` (8,
 real HTTP via httpx ASGITransport). Full Windows pipeline verified by

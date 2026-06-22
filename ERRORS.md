@@ -186,6 +186,42 @@ resume correctness is covered deterministically by the S2 direct test.
 
 ---
 
+## PROBLEM 11 — Questions hijacked by embedded command keywords
+**Topic:** intent classification (found by real human voice clips)
+**[Description & Effect]**
+The hybrid classifier ran the navigation/command rules first and matched a command
+keyword **anywhere** in the utterance. Real questions that happen to contain such a
+word were misrouted as commands:
+  * "Which regions are we expanding into **next**?" → classified **NEXT**
+  * "What is the company's hiring plan for the **next** year?" → classified **NEXT**
+Effect: spoken questions were treated as slide navigation and never answered — a
+direct hit to the accuracy gate, and exactly the adversarial pattern the source doc
+warned about.
+**FIX —** Reordered `FastIntentClassifier.classify()`: (1) explicit slide jump
+(`go to slide N`), then (2) **interrogatives short-circuit to QUESTION** (so a
+command word inside a question can't hijack it), then (3) imperative command rules,
+then (4) embedding fallback. Re-running the voice clips confirmed both cases now
+classify as QUESTION and answer correctly; intent + agent unit tests still pass.
+
+---
+
+## PROBLEM 12 — `small.en` mis-transcribes some real speech
+**Topic:** STT accuracy (found by real human voice clips)
+**[Description & Effect]**
+On one clip, local Faster-Whisper `small.en` heard "what was the revenue **this
+quarter**?" as "...revenue **discord**?" (and a wider beam made it "discordant").
+The identical phrase transcribed perfectly on two other clips, so it's an acoustic
+limitation of the smallest English model on that pronunciation — not a pipeline
+bug (the system correctly classified QUESTION and gracefully declined on the
+nonsense transcript). Local clip accuracy: **13/14**.
+**FIX —** Added a cloud STT backend (`services/stt_groq.py` +
+`services/stt_factory.py`, selected by `CB_STT_BACKEND=groq`) using Groq
+`whisper-large-v3-turbo`. Re-running the clips through it: **14/14** (and cleaner
+casing/punctuation). Local small.en stays the default (offline, fast); Groq is the
+opt-in accuracy upgrade.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with
