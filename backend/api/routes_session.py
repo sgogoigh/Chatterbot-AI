@@ -15,6 +15,8 @@ router manages the control-plane state and hands the browser its join token.
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import time
 import uuid
 
@@ -72,8 +74,12 @@ async def start_session(body: StartSessionRequest, request: Request) -> StartSes
     job = jobs.get(body.job_id)
     if job is None or job.plan is None:
         raise HTTPException(status_code=409, detail="job not built yet")
-    if sessions.active_count() >= 1:
-        raise HTTPException(status_code=409, detail="another presentation is active")
+    # Single-presentation constraint: a new presentation supersedes any prior one.
+    # Sessions are only freed explicitly via control(stop), so a refreshed/closed
+    # tab or a crashed agent task would otherwise orphan a session and lock out all
+    # future ones. Reclaim them here (cancels their agent tasks) instead of 409-ing.
+    for stale_id in list(sessions.active_ids()):
+        sessions.remove(stale_id)
 
     session_id = uuid.uuid4().hex[:12]
     room_name = body.room_name or f"chatterbot-{session_id}"
@@ -133,9 +139,31 @@ async def navigate(session_id: str, body: NavigateRequest) -> StatusResponse:
     return _status(state)
 
 
+def _purge_job_artifacts(request: Request, job_id: str) -> None:
+    """Free a finished job's memory + disk: drop its KB store, job record, and the
+    persisted ``data/jobs/<job_id>/`` dir (RAG index + slide images).
+
+    Called on stop so an ended/reloaded presentation doesn't leave indexes behind
+    (user preference: empty indexes on restart/reload to save disk). The agent's
+    in-memory store, if still referenced by a running task, lives until that task
+    is cancelled — deleting the files only prevents a future reload.
+    """
+    settings = get_settings()
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None and getattr(registry, "kb", None) is not None:
+        registry.kb.evict(job_id)
+    jobs.remove(job_id)
+    shutil.rmtree(os.path.join(settings.data_dir, "jobs", job_id), ignore_errors=True)
+
+
 @router.post("/{session_id}/control", response_model=StatusResponse)
-async def control(session_id: str, body: ControlRequest) -> StatusResponse:
-    """Pause / resume / stop a session's narration (control plane)."""
+async def control(session_id: str, body: ControlRequest, request: Request) -> StatusResponse:
+    """Pause / resume / stop a session's narration (control plane).
+
+    ``stop`` is terminal: it ends the session AND purges the presentation's
+    persisted index/artifacts (the reload/tab-close beacon and the End button both
+    route here), so disk isn't held after a presentation finishes.
+    """
     state = sessions.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="unknown session")
@@ -145,7 +173,9 @@ async def control(session_id: str, body: ControlRequest) -> StatusResponse:
         state.phase = SessionPhase.SPEAKING
     elif body.action == "stop":
         state.phase = SessionPhase.ENDED
+        job_id = state.job_id
         sessions.remove(session_id)
+        _purge_job_artifacts(request, job_id)
     return _status(state)
 
 

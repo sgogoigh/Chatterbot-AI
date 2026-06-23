@@ -47,25 +47,57 @@ def validate_embeddings(s):
 
 
 def validate_vad(s):
-    """Load Silero VAD and check probability() responds to speech vs silence."""
+    """Load Silero VAD and check probability() actually detects speech (not just range).
+
+    Range-only checks let a silently-broken VAD (returns ~0 for everything, so
+    barge-in/utterance capture never fire) pass. So we run a REAL speech clip
+    through and require it to cross the interrupt threshold somewhere, while
+    digital silence stays low — the property the agent depends on.
+    """
+    import glob
+    import os
+
     from services.vad_service import VADService
+    from utils.audio import Reframer
 
     t0 = time.perf_counter()
     vad = VADService(s)
     vad.warmup()
-    silence = np.zeros(s.vad_frame_samples, dtype=np.float32)
-    # A loud noisy frame should score higher than digital silence.
-    noise = (np.random.randn(s.vad_frame_samples) * 0.3).astype(np.float32)
-    p_sil = vad.probability(silence)
-    p_noise = vad.probability(noise)
+    p_sil = vad.probability(np.zeros(s.vad_frame_samples, dtype=np.float32))
+
+    # Run a real voice clip; require the peak to cross the interrupt threshold.
+    clips = glob.glob(os.path.join(os.path.dirname(__file__), "..", "..", "test_assets", "clips", "q_*.m4a"))
+    peak = 0.0
+    if clips:
+        import av
+
+        container = av.open(clips[0])
+        res = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=s.sample_rate)
+        pcm = []
+        for fr in container.decode(audio=0):
+            for r in res.resample(fr):
+                pcm.append(r.to_ndarray().reshape(-1))
+        container.close()
+        f32 = (np.concatenate(pcm).astype(np.float32) / 32768.0) if pcm else np.zeros(s.sample_rate, np.float32)
+        vad.reset()
+        rf = Reframer(s.vad_frame_samples)
+        for chunk in rf.push(f32):
+            peak = max(peak, vad.probability(chunk))
+
     # Latency sample (post-warmup).
     n = 50
+    silence = np.zeros(s.vad_frame_samples, dtype=np.float32)
     t1 = time.perf_counter()
     for _ in range(n):
         vad.probability(silence)
     lat_ms = (time.perf_counter() - t1) / n * 1000
-    ok = 0.0 <= p_sil <= 1.0 and 0.0 <= p_noise <= 1.0
-    record("vad", ok, f"p_silence={p_sil:.3f} p_noise={p_noise:.3f} latency={lat_ms:.3f}ms load {time.perf_counter()-t0:.1f}s")
+    # Speech must cross the threshold; silence must stay well below it.
+    ok = peak > s.vad_threshold and p_sil < 0.5
+    detail = f"speech_peak={peak:.3f} (thr {s.vad_threshold}) p_silence={p_sil:.3f} latency={lat_ms:.3f}ms"
+    if not clips:
+        ok = 0.0 <= p_sil <= 1.0
+        detail = "no test clip found; range-only " + detail
+    record("vad", ok, detail + f" load {time.perf_counter()-t0:.1f}s")
 
 
 def validate_stt(s):

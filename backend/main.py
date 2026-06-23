@@ -17,6 +17,8 @@ exercise upload/build/RAG without a media server.
 
 from __future__ import annotations
 
+import os
+import shutil
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -42,6 +44,14 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.log_level)
     log.info("Chatterbot-AI backend starting; loading models...")
+
+    # Start clean: drop persisted job artifacts (RAG indexes + slide images) from
+    # previous runs so disk usage doesn't accumulate across restarts. The in-memory
+    # JobStore is empty on startup anyway, so these dirs would otherwise be orphaned.
+    jobs_dir = os.path.join(settings.data_dir, "jobs")
+    if os.path.isdir(jobs_dir):
+        shutil.rmtree(jobs_dir, ignore_errors=True)
+        log.info(f"cleared persisted job artifacts under {jobs_dir}")
 
     registry = ServiceRegistry()
     await registry.load_all(settings)

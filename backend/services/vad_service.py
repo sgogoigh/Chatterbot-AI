@@ -87,28 +87,39 @@ class VADService:
         self._sess = ort.InferenceSession(path, sess_options=opts, providers=["CPUExecutionProvider"])
         self._input_names = {i.name for i in self._sess.get_inputs()}
         self._sr_arr = np.array(self.sample_rate, dtype=np.int64)
+        # Silero v5 prepends a fixed-size context window (the tail of the PREVIOUS
+        # frame) to every inference: 64 samples @ 16 kHz, 32 @ 8 kHz. The model was
+        # exported expecting input length = context + window (e.g. 64 + 512 = 576);
+        # feeding the bare 512-sample window yields ~0 probability for everything
+        # (i.e. VAD never detects speech). This mirrors the silero-vad package's own
+        # OnnxWrapper.__call__.
+        self._context_size = 64 if self.sample_rate == 16000 else 32
         self.reset()
 
     def reset(self) -> None:
-        """Reset the LSTM recurrent state. Call at the start of each stream/session."""
+        """Reset the recurrent state and context. Call at the start of each stream."""
         # v5 uses a single (2, batch, 128) state tensor.
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros((1, self._context_size), dtype=np.float32)
 
     def probability(self, frame: np.ndarray) -> float:
         """Return the speech probability [0, 1] for one 512-sample float32 frame.
 
-        One Silero forward pass (~sub-ms post-warmup). Threads the recurrent state
-        through successive calls so temporal context is preserved. Frames must
-        already be the configured size and sample rate (the Reframer guarantees the
-        size upstream).
+        One Silero forward pass (~sub-ms post-warmup). Prepends the carried context
+        (tail of the previous frame) as the model requires, and threads the
+        recurrent state through successive calls so temporal context is preserved.
+        Frames must already be the configured size and sample rate (the Reframer
+        guarantees the size upstream).
         """
-        feeds = {"input": frame.astype(np.float32)[None, :], "sr": self._sr_arr}
+        x = np.concatenate([self._context, frame.astype(np.float32)[None, :]], axis=1)
+        feeds = {"input": x, "sr": self._sr_arr}
         if "state" in self._input_names:
             feeds["state"] = self._state
         outputs = self._sess.run(None, feeds)
         prob = float(outputs[0].squeeze())
         if len(outputs) > 1:                 # carry forward the new recurrent state
             self._state = outputs[1]
+        self._context = x[:, -self._context_size:]   # tail becomes next call's context
         return prob
 
     def warmup(self, iters: int = 5) -> None:

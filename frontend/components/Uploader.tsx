@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "./Toast";
 
 /* Step 1 — bring in a deck. A single, obvious drop target ("stage door"). */
 export default function Uploader({
@@ -12,12 +13,11 @@ export default function Uploader({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
 
   async function handleFile(file: File) {
-    setError(null);
     if (!file.name.toLowerCase().endsWith(".pptx")) {
-      setError("That isn't a .pptx file. Export your deck as PowerPoint and try again.");
+      notify("That isn't a .pptx file. Export your deck as PowerPoint and try again.");
       return;
     }
     setBusy(true);
@@ -25,7 +25,7 @@ export default function Uploader({
       const res = await api.upload(file);
       onUploaded(res.job_id, res.slide_count, file.name);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed.");
+      notify(e instanceof Error ? e.message : "Upload failed.");
     } finally {
       setBusy(false);
     }
@@ -33,15 +33,6 @@ export default function Uploader({
 
   return (
     <div className="rise mx-auto w-full max-w-2xl">
-      <p className="eyebrow mb-3">Step 1 — Your deck</p>
-      <h2 className="font-display text-3xl font-semibold tracking-tight">
-        Bring in a presentation
-      </h2>
-      <p className="mt-2 max-w-md text-muted">
-        Drop a PowerPoint file. Chatterbot reads the slides, notes, and any text in
-        the images.
-      </p>
-
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -59,7 +50,7 @@ export default function Uploader({
         tabIndex={0}
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
         aria-label="Upload a .pptx file"
-        className={`mt-8 flex cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-8 py-16 text-center transition-colors ${
+        className={`flex cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-8 py-10 text-center transition-colors ${
           dragging
             ? "border-speak bg-speak/5"
             : "border-hairline bg-panel hover:border-faint"
@@ -90,12 +81,6 @@ export default function Uploader({
           onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
         />
       </div>
-
-      {error && (
-        <p className="mt-4 text-sm text-over" role="alert">
-          {error}
-        </p>
-      )}
     </div>
   );
 }
