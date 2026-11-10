@@ -42,8 +42,8 @@ ENV CB_MODELS_DIR=/models \
     HF_HUB_DISABLE_SYMLINKS_WARNING=1
 
 # Bake Whisper, MiniLM and the Piper voice into the image (~600 MB) so no
-# writable models volume is needed and boot doesn't download anything. A
-# compose bind mount over /models still overrides this for local runs.
+# writable models volume is needed and boot doesn't download anything. Don't
+# mount over /models: an empty mount would hide these (Piper won't re-download).
 RUN python prefetch_models.py
 
 EXPOSE 8000
