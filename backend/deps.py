@@ -104,6 +104,13 @@ class ServiceRegistry:
                     await asyncio.to_thread(obj.warmup)
             except Exception as e:  # noqa: BLE001 - warmup is best-effort
                 log.warning(f"warmup failed for {name}: {e}")
+        # Probe each LLM backend so a retired model id / bad key is visible in the
+        # boot log (R7). Logged, never fatal: the chain degrades gracefully.
+        if self.llm is not None and hasattr(self.llm, "health_check"):
+            try:
+                await self.llm.health_check()
+            except Exception as e:  # noqa: BLE001 - probe is best-effort
+                log.warning(f"LLM health check errored: {e}")
         self._ready = True
 
     def is_ready(self) -> bool:

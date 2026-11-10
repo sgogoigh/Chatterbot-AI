@@ -136,14 +136,24 @@ class LLMService:
         return await self._chat(messages, max_tokens=self.s.llm_max_answer_tokens, temperature=0.3)
 
     async def health_check(self) -> bool:
-        """Probe backends at startup; return True if at least one LLM is reachable."""
-        reply = await self._chat(
-            [{"role": "user", "content": "ping"}], max_tokens=1, temperature=0.0
-        )
-        if reply == _FALLBACK_ANSWER:
-            log.warning("LLM health check failed: no backend reachable")
-            return False
-        return True
+        """Probe EACH backend once at startup; return True if any answered.
+
+        Called from ServiceRegistry.warmup so a retired model id or bad key shows
+        up as a WARNING in the boot log (R7), instead of silently degrading every
+        answer to the next backend. Cost: one 1-token call per configured backend.
+        """
+        ping = [{"role": "user", "content": "ping"}]
+        healthy = []
+        for backend in self._backends:
+            try:
+                await self._post(backend, ping, 1, 0.0)
+                healthy.append(backend.name)
+                log.info(f"LLM backend {backend.name} ({backend.model}) OK")
+            except Exception as e:  # noqa: BLE001 - startup probe, log and continue
+                log.warning(f"LLM backend {backend.name} ({backend.model}) UNAVAILABLE: {e}")
+        if not healthy:
+            log.error("no LLM backend reachable; Q&A will return the fallback message")
+        return bool(healthy)
 
     # ----------------------------------------------------------------- internal
     async def _chat(self, messages: list[dict], *, max_tokens: int, temperature: float) -> str:
