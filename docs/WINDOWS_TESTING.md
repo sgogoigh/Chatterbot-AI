@@ -32,7 +32,7 @@ on Windows and is validated:
 | STT (faster-whisper) | ✅ validated; **or** offload to Groq Whisper |
 | Intent (MiniLM hybrid) | ✅ validated (100% smoke) |
 | RAG (FAISS + BM25) | ✅ validated |
-| LLM | ✅ Groq Cloud (key in `.env`) |
+| LLM | ✅ Gemini 3.8 Flash primary, Groq `gpt-oss-120b` fallback (keys in `.env`; see IMPLEMENTATION.md §18) |
 | Orchestration (agent loops) | ✅ Tier-1: 12 tests green |
 | **TTS** | ⛔ needs a Windows backend (this plan) |
 | Transport (audio I/O) | ⛔ needs a Windows path (this plan) |

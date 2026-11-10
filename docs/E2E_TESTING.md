@@ -14,10 +14,19 @@
 **Verified on Windows:** `pytest` from `backend/` → **50 passed, 1 skipped** (the
 skip is the E2E-latency placeholder). Frontend `tsc --noEmit` and `eslint` clean.
 
-**Fixed in the status review** (details in [`ERRORS.md`](./ERRORS.md) 13–17):
+**Fixed in the status review** (details in [`ERRORS.md`](./ERRORS.md) 13–20):
 `frontend/lib/` was gitignored (fresh clones couldn't build the UI); the Docker
-image lacked Piper + its voice; compose paths and the browser-facing LiveKit URL
-were wrong; two React lint errors; uploads were buffered fully in memory.
+image lacked Piper + its voice; compose paths, its `.env` location and the
+browser-facing LiveKit URL were wrong; two React lint errors; uploads were
+buffered fully in memory; the default Groq model had been retired, so every LLM
+call was silently failing.
+
+**LLM:** Gemini 3.8 Flash → Groq `gpt-oss-120b` → Ollama chain; both cloud
+backends probed OK live. Spot latency: Groq ~0.65 s vs Gemini ~1.7 s per short
+answer — compare properly in Tier 2 before settling `CB_LLM_PRIMARY`.
+
+**Deployment:** production plan (Vercel + Fly.io + LiveKit Cloud) in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md) — not yet deployed.
 
 **Still open — testing (deferred):**
 - Container image never built/run end-to-end; Piper never actually synthesized (Tier 2).
@@ -33,7 +42,8 @@ were wrong; two React lint errors; uploads were buffered fully in memory.
 - Slide rasterization needs LibreOffice, so it only works in the container.
 - `piper_exe` TTS backend is listed but not implemented.
 - Docker base image is tag-pinned, not digest-pinned.
-- Open decisions: self-hosted LiveKit vs Cloud; Groq 70B vs 8B-instant.
+- Single-instance, in-memory session/job state: the backend cannot scale past one machine (see DEPLOYMENT.md §6).
+- Resolved: LiveKit Cloud for production; Gemini 3.8 Flash primary + Groq `gpt-oss-120b` fallback (revisit after latency tests).
 
 ---
 
@@ -117,7 +127,7 @@ utterances into the input loop; capture the agent's pushed audio to a WAV file;
 assert transcripts, answers, and timing.
 - *Why:* proves the actual models behave in-pipeline (e.g. Whisper transcribes the
   barge-in, Piper renders the answer, RAG+LLM grounds it).
-- *Needs:* **Linux/Docker** (Piper) + **Groq key or Ollama**.
+- *Needs:* **Linux/Docker** (Piper) + **Gemini/Groq key or Ollama**.
 - *Mechanisms covered:* 4, 6 + benchmark tables.
 
 ### Tier 3 — Full LiveKit loop (real WebRTC)
@@ -152,8 +162,8 @@ assertion. IDs reused across tiers.
 | S7 | Pacing drift → track switch STANDARD→SUMMARY→TURBO | 1,2 | 4 | upcoming track changes on drift; no switch on schedule | ✅ T1 |
 | S8 | Spurious VAD (noise) → empty STT → resume | 1,2 | 1 | no intent fired; zero context loss | ✅ T1 |
 | S-full | Both loops together: barge-in detected + no deadlock | 1 | 1,2,3 | burst transcribed, question answered, gather completes | ✅ T1 |
-| S9 | LLM (Groq) down → Ollama fallback → graceful degrade | 2 | 6 | answer via fallback or graceful message; session survives | ⏳ T2 |
-| S10 | Second concurrent session rejected | HTTP | — | `409` (single-presentation constraint) | ✅ API |
+| S9 | Primary LLM (Gemini) down → Groq → Ollama fallback → graceful degrade | 2 | 6 | answer via fallback or graceful message; session survives | ⏳ T2 |
+| S10 | Second session supersedes the first | HTTP | — | second start succeeds; first is reclaimed (single-presentation constraint; was `409`) | ✅ API |
 | S11 | Long question (>2 s) handled | 2 | — | utterance capped at `stt_max_utterance_ms`; completes (R3) | ⏳ T2 |
 | S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides | ⏳ T2 |
 | S13 | Upload → build (3 tracks) → status → session | HTTP | control | build completes; 3 tracks; navigate/status work | ✅ API |
@@ -212,7 +222,7 @@ These don't exist yet and are required for Tiers 1–3:
 - [ ] `make`/task runner for `make bench`, `make e2e` (optional but tidy).
 
 **Credentials / services**
-- [ ] **Groq API key** (`CB_GROQ_API_KEY`) for real Q&A + script generation — OR
+- [x] **Gemini and/or Groq API key** (`GEMINI_API_KEY` / `GROQ_API_KEY`) for real Q&A + script generation — both present in `.env` and probed OK — OR
 - [ ] **Ollama** running locally with `llama3.1:8b` pulled (fallback path; also lets S9 be tested).
 - [ ] **LiveKit** for Tier 3: either self-hosted (`livekit-server --dev`, keys via env) or LiveKit Cloud creds (`CB_LIVEKIT_URL/API_KEY/API_SECRET`).
 

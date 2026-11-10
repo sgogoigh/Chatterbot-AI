@@ -6,14 +6,16 @@ questions (answered from the deck via RAG), then **resuming the exact sentence**
 it left off on.
 
 - **Backend** — FastAPI + Python: VAD (Silero) · STT (Faster-Whisper) · intent
-  (MiniLM) · RAG (FAISS + BM25) · LLM (Groq) · TTS (edge-tts on Windows / Piper in
+  (MiniLM) · RAG (FAISS + BM25) · LLM (Gemini 3.8 Flash → Groq → Ollama fallback) · TTS (edge-tts on Windows / Piper in
   Docker), orchestrated over LiveKit WebRTC.
 - **Frontend** — Next.js 16 + React 19 + Tailwind 4: upload → configure → build →
   present, with a live voice session.
 
-> New here? Read [`PLAN.md`](./PLAN.md) for what it is, [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
-> for how the backend works, and [`WINDOWS_TESTING.md`](./WINDOWS_TESTING.md) for the
-> Windows-only setup notes.
+> New here? All project docs live in [`docs/`](./docs/README.md): what it is
+> ([`PLAN.md`](./docs/PLAN.md)), how the backend works
+> ([`IMPLEMENTATION.md`](./docs/IMPLEMENTATION.md)), current status
+> ([`E2E_TESTING.md`](./docs/E2E_TESTING.md) §0), and production deployment
+> ([`DEPLOYMENT.md`](./docs/DEPLOYMENT.md) — Vercel + Fly.io).
 
 ---
 
@@ -23,7 +25,7 @@ it left off on.
 |------|---------|-------|
 | Python | 3.11+ | backend (3.12 works) |
 | Node.js | 20+ | frontend (22 recommended) |
-| Groq API key | — | LLM + grounded answers · free tier at [console.groq.com](https://console.groq.com) |
+| Gemini and/or Groq API key | — | LLM + grounded answers · [aistudio.google.com](https://aistudio.google.com) / [console.groq.com](https://console.groq.com); at least one is required, both gives automatic fallback |
 | LiveKit Cloud | optional | only for the live **voice** session ([cloud.livekit.io](https://cloud.livekit.io)) |
 
 Everything runs on **Windows, macOS, or Linux — no Docker required.**
@@ -36,7 +38,9 @@ Create `.env` in this folder (`Chatterbot-AI/.env`). The backend reads it
 automatically from any working directory.
 
 ```ini
-# Required for LLM answers + script generation
+# LLM answers + script generation — at least one. Gemini is tried first,
+# Groq is the fallback (flip with CB_LLM_PRIMARY=groq).
+GEMINI_API_KEY=your_gemini_key
 GROQ_API_KEY=gsk_your_key_here
 
 # Optional — only needed for the live voice session ("Go live")
@@ -122,8 +126,12 @@ Defaults are sensible; override in `.env`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GROQ_API_KEY` | — | LLM (answers + script generation) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model |
+| `GEMINI_API_KEY` | — | Gemini LLM (answers + script generation) |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model (via its OpenAI-compatible endpoint) |
+| `CB_GEMINI_REASONING_EFFORT` | `low` | `low` / `medium` / `high` (`minimal` is rejected by 3.x Flash) |
+| `GROQ_API_KEY` | — | Groq LLM (fallback) + optional Groq STT |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq chat model (`llama-3.3-70b-versatile` was retired) |
+| `CB_LLM_PRIMARY` | `gemini` | which keyed cloud LLM is tried first: `gemini` or `groq`. Measured once: Groq ≈0.65 s vs Gemini ≈1.7 s per short answer — use `groq` if live Q&A latency matters most |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | — | live voice session |
 | `CB_LIVEKIT_PUBLIC_URL` | same as `LIVEKIT_URL` | LiveKit URL handed to the browser; set it only when the backend reaches LiveKit by an internal name (Docker: backend uses `ws://livekit:7880`, browser uses `ws://localhost:7880`) |
 | `CB_STT_BACKEND` | `local` | `local` (Faster-Whisper, offline) or `groq` (whisper-large-v3-turbo, more accurate) |
@@ -156,8 +164,8 @@ CB_MODELS_DIR=../models python tests/verify_livekit_agent.py
 Try the live mic loop end-to-end (needs a microphone):
 `CB_MODELS_DIR=../models python run_local.py` — talk to the demo deck in your terminal.
 
-See [`E2E_TESTING.md`](./E2E_TESTING.md) for the full test strategy and current
-status, and [`ERRORS.md`](./ERRORS.md) for issues found + fixed along the way.
+See [`E2E_TESTING.md`](./docs/E2E_TESTING.md) for the full test strategy and current
+status, and [`ERRORS.md`](./docs/ERRORS.md) for issues found + fixed along the way.
 
 ---
 
@@ -189,35 +197,37 @@ Chatterbot-AI/
 ├── docker/          Dockerfile + compose (Linux deploy)
 ├── requirements.txt           cross-platform backend deps (Windows-friendly)
 ├── requirements-linux.txt     Piper TTS (container only)
-├── PLAN.md · IMPLEMENTATION.md · WINDOWS_TESTING.md · E2E_TESTING.md · ERRORS.md
+├── docs/            PLAN · IMPLEMENTATION · E2E_TESTING · WINDOWS_TESTING · ERRORS · DEPLOYMENT
 └── .env             your credentials (not committed)
 ```
 
-## Deployment (Linux / Docker)
+## Docker (Linux container)
 
-The image installs `requirements.txt` + `requirements-linux.txt` (Piper TTS),
-fetches the Piper voice into the models volume on first start, and runs as a
-non-root user. From the repo root:
+For production (Vercel frontend + Fly.io backend + LiveKit Cloud), see
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+
+The image installs `requirements.txt` + `requirements-linux.txt` (Piper TTS) with
+CPU-only torch, **bakes the Whisper / MiniLM / Piper weights in at build time**
+(`docker/prefetch_models.py`), and runs as a non-root user. From the repo root
+(uses the repo-root `.env`, LiveKit Cloud):
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-For the bundled self-hosted LiveKit (`--dev` mode), set in `backend/.env`:
+To use a self-hosted LiveKit (`--dev` mode) instead of Cloud:
 
-```
-CB_LIVEKIT_URL=ws://livekit:7880
-CB_LIVEKIT_PUBLIC_URL=ws://localhost:7880
-CB_LIVEKIT_API_KEY=devkey
-CB_LIVEKIT_API_SECRET=secret
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local-livekit.yml \
+  --profile local-livekit up --build
 ```
 
-Compose mounts `backend/data` and the repo-root `models/`, so jobs and the model
-cache are shared with local runs. `.env` files and model caches are excluded from
-the image by `.dockerignore`. The container path has not been run end-to-end yet
-(see [`E2E_TESTING.md`](./E2E_TESTING.md) §0).
+Compose mounts `backend/data` so job artifacts land where local runs put them; it
+does not mount `models/` (that would hide the baked weights). `.env` files and
+local model caches are excluded from the build context by `.dockerignore`. The container path has not been run end-to-end yet
+(see [`E2E_TESTING.md`](./docs/E2E_TESTING.md) §0).
 
 `test_assets/clips/` (personal voice recordings) is gitignored; `run_clips.py`
 needs you to record your own clips from `test_assets/CLIP_SCRIPT.md`.
 
-See [`WINDOWS_TESTING.md`](./WINDOWS_TESTING.md) §1 for why Docker is optional locally.
+See [`WINDOWS_TESTING.md`](./docs/WINDOWS_TESTING.md) §1 for why Docker is optional locally.

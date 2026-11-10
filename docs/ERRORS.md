@@ -288,6 +288,51 @@ with a 1 MB limit → `413`, no leftover job dir.
 
 ---
 
+## PROBLEM 18 — Default Groq model retired; failure was silent
+**Topic:** LLM / API drift (found 2026-11-11) — IMPLEMENTATION.md R15
+**[Description & Effect]**
+A live call returned `404 model_not_found` for `llama-3.3-70b-versatile`; Groq's
+`/models` list no longer includes any Llama 3.x chat model. Every Q&A answer and
+script generation therefore fell through to Ollama (not running) and returned the
+"can't reach the knowledge service" apology. Nobody noticed because
+`health_check()` existed but was never called.
+**FIX —** Default `GROQ_MODEL` → `openai/gpt-oss-120b`; added Gemini
+`gemini-3.8-flash` as the primary backend (`LLMService` chain, `CB_LLM_PRIMARY`);
+`ServiceRegistry.warmup` now probes each backend and logs OK/UNAVAILABLE. Both
+default models reason and count reasoning tokens against `max_tokens`, so
+per-backend headroom is added (a 1-token ping returned empty without it).
+
+---
+
+## PROBLEM 19 — Docker compose read a `.env` that doesn't exist
+**Topic:** deployment (found 2026-11-11)
+**[Description & Effect]**
+Compose used `env_file: ../backend/.env`, but the README and the real setup put
+`.env` at the repo root, so `docker compose up` would fail on a missing file. The
+self-hosted LiveKit overrides also had to live in that same `.env`, where
+`CB_LIVEKIT_URL` would have broken local (Cloud) runs.
+**FIX —** Compose reads `../.env` and uses LiveKit Cloud by default; the
+self-hosted server is opt-in via `--profile local-livekit` plus
+`docker/docker-compose.local-livekit.yml`, which carries its URLs and dev keys.
+
+---
+
+## PROBLEM 20 — Image not deployable to Fly.io as built
+**Topic:** deployment (found while writing DEPLOYMENT.md)
+**[Description & Effect]**
+Two issues would have bitten the first Fly deploy: (a) Fly volumes mount
+root-owned, so the non-root `app` user couldn't write a `/models` volume (an
+entrypoint that chowns as root was tried and rejected by the org's non-root
+`USER` check); (b) `sentence-transformers` pulled PyPI's Linux torch wheel, which
+bundles several GB of CUDA libraries a CPU-only image never uses.
+**FIX —** Bake the weights into the image at build time
+(`docker/prefetch_models.py`): no volume needed, no first-boot download, still
+non-root. Install CPU-only `torch==2.5.1` first. Base image digest-pinned.
+Compose no longer mounts `models/` over the baked cache. Supersedes the
+runtime voice fetch from PROBLEM 14.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with

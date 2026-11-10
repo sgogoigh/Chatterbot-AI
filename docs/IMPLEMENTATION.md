@@ -26,7 +26,7 @@
 15. [PacingService (time-locked budgeting)](#15-pacingservice-time-locked-budgeting)
 16. [PlaybackTracker (deterministic resume)](#16-playbacktracker-deterministic-resume)
 17. [KnowledgeBase / RAG](#17-knowledgebase--rag)
-18. [GroqLLMService (+ Ollama fallback)](#18-groqllmservice--ollama-fallback)
+18. [LLMService (Gemini / Groq / Ollama chain)](#18-llmservice-gemini--groq--ollama-chain)
 19. [Concurrency, locking & interrupt semantics](#19-concurrency-locking--interrupt-semantics)
 20. [Error handling, logging & graceful degradation](#20-error-handling-logging--graceful-degradation)
 21. [Testing & benchmark harness](#21-testing--benchmark-harness)
@@ -64,7 +64,7 @@ uvicorn[standard]==0.30.*
 python-multipart==0.0.*          # multipart upload (.pptx)
 pydantic==2.*
 pydantic-settings==2.*
-httpx==0.27.*                    # async HTTP (Groq, Ollama fallback)
+httpx==0.27.*                    # async HTTP (Gemini, Groq, Ollama — all OpenAI-compatible)
 
 # ---- realtime media ----
 livekit==0.17.*                  # rtc SDK (AudioStream/AudioSource)
@@ -135,7 +135,7 @@ backend/
 │   ├── tts_service.py           # Piper — §12
 │   ├── fast_intent_classifier.py# MiniLM prototype + rules — §13
 │   ├── embeddings.py            # shared MiniLM SentenceTransformer singleton
-│   ├── groq_llm_service.py      # Groq client (+ Ollama fallback) — §18
+│   ├── llm_service.py           # Gemini → Groq → Ollama chain — §18
 │   └── slide_processor.py       # python-pptx + OCR + script gen — §14
 │
 ├── utils/
@@ -193,7 +193,11 @@ class Settings(BaseSettings):
 
     # --- LLM ---
     groq_api_key: SecretStr | None = None
-    groq_model: str = "llama-3.3-70b-versatile"  # ⚠️ R7 model id drifts
+    groq_model: str = "openai/gpt-oss-120b"      # ⚠️ R7 model id drifts (llama-3.3-70b retired)
+    llm_primary: str = "gemini"                  # gemini | groq (first cloud LLM tried)
+    gemini_api_key: SecretStr | None = None      # GEMINI_API_KEY
+    gemini_model: str = "gemini-3.8-flash"
+    gemini_reasoning_effort: str = "low"         # low|medium|high; minimal rejected
     groq_base_url: str = "https://api.groq.com/openai/v1"
     llm_timeout_s: float = 20.0
     ollama_base_url: str = "http://localhost:11434"   # fallback
@@ -219,7 +223,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="CB_")
 ```
 
-A `.env.example` ships with every key (no secrets). Startup fails fast if `livekit_*` or `groq_api_key` are missing **and** no Ollama fallback is reachable (§20).
+A `.env.example` ships with every key (no secrets). Startup never fails on the LLM: `health_check` logs each backend (Gemini / Groq / Ollama) as OK or UNAVAILABLE, and Q&A degrades gracefully if none is reachable (§18.3, §20).
 
 ---
 
@@ -777,29 +781,49 @@ class KnowledgeBase:
 
 ---
 
-## 18. GroqLLMService (+ Ollama fallback)
+## 18. LLMService (Gemini / Groq / Ollama chain)
 
-`services/groq_llm_service.py`. Used for **script generation** (build-time, batch) and **Q&A answering** (runtime, latency-critical).
+`services/llm_service.py` (formerly `groq_llm_service.py` / `GroqLLMService`). Used for **script generation** (build-time, batch) and **Q&A answering** (runtime, latency-critical).
 
 ### 18.1 Client
-🔧 **Decision:** use `httpx.AsyncClient` against Groq's **OpenAI-compatible** `/chat/completions` (doc lists `httpx`; avoids an extra SDK). Streaming enabled for Q&A to minimize TTFT (doc measured ~129 ms).
+🔧 **Decision:** one `httpx.AsyncClient` against the **OpenAI-compatible** `/chat/completions` route that all three backends expose — no provider SDKs.
+
+| Order (`CB_LLM_PRIMARY=gemini`, default) | Endpoint | Default model | Key |
+|---|---|---|---|
+| 1. Gemini | `generativelanguage.googleapis.com/v1beta/openai` | `gemini-3.8-flash` | `GEMINI_API_KEY` |
+| 2. Groq | `api.groq.com/openai/v1` | `openai/gpt-oss-120b` | `GROQ_API_KEY` |
+| 3. Ollama | `localhost:11434/v1` | `llama3.1:8b` | — |
+
+`CB_LLM_PRIMARY=groq` swaps 1 and 2. Only keyed backends join the chain; an error **or an empty reply** falls through to the next one.
+
 ```python
-class GroqLLMService:
-    def __init__(self, s: Settings): self._client = httpx.AsyncClient(base_url=s.groq_base_url, ...)
+class LLMService:
     async def answer(self, question, ctx: RetrievedContext, slide_text: str) -> str:
         msgs = build_qa_messages(question, ctx, slide_text)   # prompts/qa_answer.py
-        return await self._chat(msgs, stream=True, max_tokens=300, temperature=0.3)
+        return await self._chat(msgs, max_tokens=300, temperature=0.3)
     async def generate_script(self, slide, words, persona, track) -> str:
-        return await self._chat(build_script_messages(...), temperature=0.3)
+        return await self._chat(build_script_messages(...), max_tokens=600, temperature=0.3)
 ```
+
+**Reasoning models.** Both cloud defaults reason. Gemini 3.x Flash cannot turn thinking off (`reasoning_effort` low/medium/high; `minimal` returns 400), and `gpt-oss-120b` is a reasoning model. Reasoning tokens count against `max_tokens`, so each backend adds `*_thinking_headroom_tokens` (Gemini 1024, Groq 512) to the caller's cap — otherwise a 300-token answer cap or a 1-token ping can come back empty.
+
+**Measured 2026-11-11** (Windows dev box, warm connection, one-sentence answer — a spot check, not a benchmark):
+
+| Backend | Latency |
+|---|---|
+| Groq `gpt-oss-120b`, effort low | ~0.6–0.7 s |
+| Gemini `gemini-3.8-flash`, effort low | ~1.6–1.75 s |
+| Gemini `gemini-3.8-flash`, effort medium | ~4.4 s |
+
+Gemini is primary by decision; switch to `CB_LLM_PRIMARY=groq` if live Q&A latency is the priority. Responses are not streamed (`stream: false`).
 
 ### 18.2 Grounding / anti-hallucination (doc: < 5% hallucination)
 Q&A system prompt enforces: answer **only** from provided slide context; if unsupported, say so; cite slide numbers (`sources`). Current-slide context is presented first and labeled as primary. This realizes the doc's "explicit source attribution."
 
 ### 18.3 Resilience (doc risk mitigations)
 - `tenacity` retry (exp backoff, 2 attempts) on 5xx/timeouts.
-- ⚠️ **R7 — model id drift.** "Llama 3 70B" isn't a current Groq model id. Default to `llama-3.3-70b-versatile`, configurable via `CB_GROQ_MODEL`; validate the id at startup with a cheap call and log the resolved model.
-- **Fallback to local Ollama** (doc): on Groq unavailability (network/401/exhausted), switch to `ollama_base_url` with `ollama_model`. A `LLMRouter` wraps both; health-checked at startup, hot-swappable at runtime. If neither is reachable, QUESTION intents degrade gracefully to a spoken "I can't reach the knowledge service right now" rather than crashing the session (§20).
+- ⚠️ **R7 / R15 — model id drift.** Model ids are configurable (`GEMINI_MODEL`, `GROQ_MODEL`). `ServiceRegistry.warmup` calls `LLMService.health_check`, which pings **each** backend with a 1-token request and logs `OK` / `UNAVAILABLE` per backend — never fatal. (Before this, nothing called the probe, and the retired `llama-3.3-70b-versatile` silently failed every request.)
+- **Fallback chain** (doc: Ollama fallback): each failing backend falls through to the next. If none answers, QUESTION intents degrade gracefully to a spoken "I can't reach the knowledge service right now" rather than crashing the session (§20).
 
 ---
 
@@ -838,7 +862,7 @@ The trickiest correctness area. Consolidated rules:
 
   | Failure | Behavior |
   |---|---|
-  | Groq down | Fall back to Ollama; if both down, speak a graceful apology, stay in session (no crash) |
+  | Primary LLM down | Fall through Gemini → Groq → Ollama; if all down, speak a graceful apology, stay in session (no crash) |
   | STT returns empty | Treat as spurious VAD → resume |
   | TTS synth error | Skip sentence with WARN, advance (never deadlock the loop) |
   | LiveKit track drop | Agents reconnect logic; on hard drop, mark session `ENDED`, persist state |
@@ -869,29 +893,34 @@ Mirrors the doc's two suites + the success-criteria gates. `pytest` + `pytest-as
 ## 22. Docker & compose
 
 ### 22.1 Dockerfile (corrected vs. doc — see R9, R13)
-See [`docker/Dockerfile`](./docker/Dockerfile). Shape:
+See [`docker/Dockerfile`](../docker/Dockerfile). Shape:
 ```dockerfile
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:...           # digest-pinned
 RUN apt-get install ... ffmpeg libsndfile1 tesseract-ocr \
     libreoffice-core poppler-utils         # ADDED: slide rasterization (R9)
 WORKDIR /app
 COPY requirements.txt requirements-linux.txt ./
-RUN pip install -r requirements.txt -r requirements-linux.txt   # ADDED: Piper (R13)
+RUN pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
+ && pip install -r requirements.txt -r requirements-linux.txt   # ADDED: CPU torch; Piper (R13)
 COPY backend/ /app/
-COPY docker/fetch_piper_voice.py /app/   # ADDED: downloads the Piper voice (R13)
-USER app                                  # ADDED: non-root
-ENV CB_MODELS_DIR=/models
-CMD sh -c "python fetch_piper_voice.py && exec uvicorn main:app --host 0.0.0.0 --port 8000"
+COPY docker/fetch_piper_voice.py docker/prefetch_models.py /app/
+USER app                                   # ADDED: non-root
+ENV CB_MODELS_DIR=/models CB_DATA_DIR=/app/data
+RUN python prefetch_models.py              # ADDED: bake Whisper + MiniLM + Piper voice (R13)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
-- Whisper/MiniLM auto-download to the **mounted volume** `/models` on first run. Piper does **not** auto-download: `fetch_piper_voice.py` pulls `{CB_PIPER_VOICE}.onnx` + `.onnx.json` from `rhasspy/piper-voices` into `/models/piper/` before the server starts.
+- **Models are baked into the image** by `prefetch_models.py`, which uses the backend's own `Settings` so names and paths match the services. Piper never auto-downloads; `fetch_piper_voice.py` pulls `{CB_PIPER_VOICE}.onnx` + `.onnx.json` from `rhasspy/piper-voices`. Silero VAD ships inside its package.
+- Why bake rather than mount a volume: Fly.io volumes mount root-owned, and the image runs as non-root; there's also no ~600 MB download on first boot.
+- CPU-only torch: `sentence-transformers` pulls torch, and PyPI's Linux wheel bundles several GB of unused CUDA libraries.
 - `.dockerignore` keeps `.env`, model caches, job data and the frontend out of the build context.
 
 ### 22.2 docker-compose
-- `backend` (this image, port 8000), env from `backend/.env`.
-- `livekit` (`livekit/livekit-server:v1.8`, `--dev`) for self-hosted WebRTC, OR use LiveKit Cloud (then only `backend`).
+- `backend` (this image, port 8000), env from the repo-root `.env` (same file local runs use); LiveKit Cloud by default.
+- `livekit` (`livekit/livekit-server:v1.8`, `--dev`) — opt-in with `--profile local-livekit` plus `docker/docker-compose.local-livekit.yml`, which overrides the backend's LiveKit URL/keys.
 - Optional `ollama` service for the LLM fallback.
 - Volumes: `backend/data` → `/app/data` (job artifacts), repo-root `models/` → `/models` (model cache) — the same paths local runs use.
-- Inside compose the backend reaches LiveKit at `ws://livekit:7880` but the browser needs `ws://localhost:7880`: set `CB_LIVEKIT_PUBLIC_URL` for the URL returned by `POST /api/sessions` (R14).
+- With self-hosted LiveKit the backend reaches it at `ws://livekit:7880` but the browser needs `ws://localhost:7880`: `CB_LIVEKIT_PUBLIC_URL` sets the URL returned by `POST /api/sessions` (R14).
+- Production (Vercel + Fly.io + LiveKit Cloud): [`DEPLOYMENT.md`](./DEPLOYMENT.md).
 
 ---
 
@@ -915,7 +944,7 @@ Maps to PLAN §15 phases; each step is independently testable before the next.
 9. `slide_processor.py` (extract + rasterize) + upload endpoint.
 10. `pacing.py` + `test`; wire `build` endpoint (background task, §7.1).
 11. `knowledge_base/*` (hybrid RAG) + `test_rag`.
-12. `groq_llm_service.py` (+ Ollama) + prompts; script-gen and Q&A.
+12. `llm_service.py` (Gemini → Groq → Ollama) + prompts; script-gen and Q&A.
 13. `agent_worker.py`: assemble both loops, locking, interrupt, resume (§9/§19). Full barge-in test.
 
 **Phase 4 — Evaluation**
@@ -936,7 +965,7 @@ This section is the deliverable's "rechecks for mistakes / gaps." Each item is a
 | **R4** | **Real bug** | "16 kHz mono TTS output" vs. lessac-medium's 22 050 Hz → wrong-pitch playback if forced to 16 k. | AudioSource = voice native rate; VAD/STT stay 16 k (separate streams); §12.1. |
 | **R5** | Deployment ambiguity | Doc implies one container runs FastAPI + worker; Agents usually runs as its own CLI. | In-process background agent task; sidecar fallback documented; §8.2. |
 | **R6** | **Metric misread** | "VAD onset < 5 ms" conflates *inference* (0.34 ms) with *perceptual onset* (≥32 ms frame + debounce). | We claim inference target only; onset bounded by frame+min-speech; §10. |
-| **R7** | API drift | "Llama 3 70B" is not a current Groq model id. | Default `llama-3.3-70b-versatile`, configurable + startup-validated; §18.3. |
+| **R7** | API drift | "Llama 3 70B" is not a current Groq model id. | Default was `llama-3.3-70b-versatile`; it has since been retired too (R15). Configurable + now actually probed at startup; §18.3. |
 | **R8** | Optimistic target | "TTS first byte < 100 ms" is hard on CPU; realistic first-chunk is higher. | Stream Piper chunks for lowest achievable TTFT; flag target as stretch; §12.2. |
 | **R9** | Dockerfile gap | python-pptx can't render full slides; Dockerfile lacks a renderer. | Add `libreoffice-core` + `poppler-utils`; render at build; §14.1/§22. |
 | **R10** | Concurrency bug risk | Push-vs-playout lag would break sample-exact resume. | Snap resume to sentence start + push one sentence at a time + `clear_queue`; §16.3. |
@@ -948,6 +977,7 @@ This section is the deliverable's "rechecks for mistakes / gaps." Each item is a
 | **R1-fix** | **Dependency conflict (found at validation)** | `livekit==0.17.*` pin conflicts with `livekit-agents` (needs `livekit>=0.18.1`). | Don't hard-pin `livekit`; let `livekit-agents>=0.12,<0.13` resolve a compatible rtc SDK (`livekit>=0.18,<1`). Fixed in requirements.txt + §2.2. |
 | **R13** | **Deployment bug (found at status review)** | Dockerfile installed only `requirements.txt`, so Piper — which `tts_backend=auto` selects on Linux — was missing; nothing downloaded the Piper voice either. | Install `requirements-linux.txt`; `docker/fetch_piper_voice.py` fetches the voice on container start. §22.1. |
 | **R14** | **Deployment bug (found at status review)** | One `livekit_url` served both the agent (inside compose) and the browser (outside). | Added `CB_LIVEKIT_PUBLIC_URL` (browser URL; defaults to `livekit_url`). §22.2. |
+| **R15** | **API drift (found 2026-11-11)** | Groq retired `llama-3.3-70b-versatile` (404 `model_not_found`); the startup probe was never called, so every LLM request silently fell through to Ollama / the apology string. | Default Groq model → `openai/gpt-oss-120b`; Gemini 3.8 Flash added as primary; per-backend startup probe wired in. §18. |
 | **R6-fix** | **Bug (found at validation)** | VAD drafted via `torch.hub(onnx=True)` transitively needs `torchaudio` (not in reqs) → import crash. | Rewrote `VADService` to pure onnxruntime over the `silero-vad`-bundled `.onnx` (located without importing the package). No torch.hub/torchaudio. Validated 0.2 ms. §10. |
 
 ### Validation status (local venv, Python 3.12 / Windows)
@@ -967,8 +997,8 @@ Ran `backend/tests/validate_ml.py` against real model weights:
 **Still open for the user (decisions, not blockers):**
 - Self-hosted LiveKit server vs. LiveKit Cloud (affects compose + ops).
 - Whether slide rasterization lives in backend (LibreOffice) or is pushed to the frontend phase.
-- Confirm Groq model tier (70B vs 8B-instant) for the Q&A latency/quality trade-off.
+- ~~Confirm Groq model tier~~ → resolved: Gemini 3.8 Flash primary, Groq `gpt-oss-120b` fallback (§18). Revisit `CB_LLM_PRIMARY` after latency testing (Groq measured ~2.5× faster).
 
 ---
 
-*End of backend implementation spec. The Next.js frontend lives in [`frontend/`](./frontend/) (see its README); current project status and open gaps are tracked in [`E2E_TESTING.md`](./E2E_TESTING.md) §0.*
+*End of backend implementation spec. The Next.js frontend lives in [`frontend/`](../frontend/) (see its README); current project status and open gaps are tracked in [`E2E_TESTING.md`](./E2E_TESTING.md) §0.*

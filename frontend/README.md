@@ -53,4 +53,4 @@ lib/         api.ts (typed backend client) · types.ts · livekit.ts (voice conn
 - Slide images load directly from the backend via `<img>` (no `next/image` remote
   config needed).
 - The live voice path needs the backend's LiveKit agent dispatched to the room
-  (the W3 path in `../WINDOWS_TESTING.md`); slide navigation works regardless.
+  (the W3 path in `../docs/WINDOWS_TESTING.md`); slide navigation works regardless.
