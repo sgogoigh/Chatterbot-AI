@@ -29,7 +29,7 @@ class ServiceRegistry:
         self.stt = None             # STTService
         self.tts = None             # TTSService
         self.intent = None          # FastIntentClassifier
-        self.llm = None             # GroqLLMService
+        self.llm = None             # LLMService (Gemini / Groq / Ollama chain)
         self.kb = None              # KnowledgeBase
         self.slides = None          # SlideProcessor
         self._ready = False
@@ -83,11 +83,11 @@ class ServiceRegistry:
         )
         from core.knowledge_base import KnowledgeBase
         from services.fast_intent_classifier import FastIntentClassifier
-        from services.groq_llm_service import GroqLLMService
+        from services.llm_service import LLMService
         from services.slide_processor import SlideProcessor
 
         self.intent = FastIntentClassifier(self.embeddings)
-        self.llm = GroqLLMService(s)
+        self.llm = LLMService(s)
         self.kb = KnowledgeBase(s, self.embeddings)
         self.slides = SlideProcessor(s, self.llm)
 
