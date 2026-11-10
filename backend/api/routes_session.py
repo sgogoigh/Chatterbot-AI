@@ -110,7 +110,7 @@ async def start_session(body: StartSessionRequest, request: Request) -> StartSes
 
     return StartSessionResponse(
         session_id=session_id, room_name=room_name,
-        livekit_url=settings.livekit_url, token=user_token,
+        livekit_url=settings.livekit_public_url or settings.livekit_url, token=user_token,
     )
 
 

@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     livekit_url: str = Field(
         default="", validation_alias=AliasChoices("CB_LIVEKIT_URL", "LIVEKIT_URL")
     )
+    # URL handed to the BROWSER. Empty => same as livekit_url. Set it when the
+    # backend reaches LiveKit by an internal name (docker compose: ws://livekit:7880)
+    # that the browser can't resolve (ws://localhost:7880).
+    livekit_public_url: str = ""
     livekit_api_key: str = Field(
         default="", validation_alias=AliasChoices("CB_LIVEKIT_API_KEY", "LIVEKIT_API_KEY")
     )

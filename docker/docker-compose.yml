@@ -2,6 +2,12 @@
 # Single-instance backend + optional self-hosted LiveKit + optional Ollama fallback.
 # Use LiveKit Cloud instead by dropping the `livekit` service and pointing
 # CB_LIVEKIT_URL at the cloud endpoint.
+#
+# Run from the repo root:  docker compose -f docker/docker-compose.yml up --build
+# With the self-hosted server below, set in backend/.env:
+#   CB_LIVEKIT_URL=ws://livekit:7880            (backend -> server, inside compose)
+#   CB_LIVEKIT_PUBLIC_URL=ws://localhost:7880   (URL handed to the browser)
+#   CB_LIVEKIT_API_KEY=devkey  CB_LIVEKIT_API_SECRET=secret   (--dev defaults)
 
 services:
   backend:
@@ -13,15 +19,17 @@ services:
     env_file:
       - ../backend/.env
     volumes:
-      - ../data:/app/data        # job artifacts (slides, scripts, RAG indexes)
-      - ./models:/models         # model cache (avoids re-downloading ~500MB)
+      # Same locations a local run uses (backend/data, repo-root models/), so jobs
+      # and the ~570 MB model cache are shared between local and container runs.
+      - ../backend/data:/app/data
+      - ../models:/models
     depends_on:
       - livekit
 
   # Self-hosted WebRTC signaling/media (omit if using LiveKit Cloud).
   livekit:
-    image: livekit/livekit-server:latest
-    command: --dev          # dev mode; supply a config + keys for production
+    image: livekit/livekit-server:v1.8
+    command: --dev --bind 0.0.0.0   # dev mode (devkey/secret); supply a config + keys for production
     ports:
       - "7880:7880"         # signaling (ws)
       - "7881:7881"         # rtc/tcp
