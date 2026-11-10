@@ -1,4 +1,6 @@
 # Chatterbot-AI backend image (docs/IMPLEMENTATION.md §22.1).
+# Build context is backend/ (Fly.io launches from backend/; compose uses it too):
+#   docker build -t chatterbot-backend backend/
 # Corrected vs. the source doc: adds libreoffice-core + poppler-utils for
 # full-slide rasterization (recheck R9), which python-pptx cannot do alone.
 FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
@@ -28,9 +30,9 @@ COPY requirements.txt requirements-linux.txt ./
 RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
  && pip install --no-cache-dir -r requirements.txt -r requirements-linux.txt
 
-# Application code (backend/ is copied flat so `uvicorn main:app` resolves).
-COPY backend/ /app/
-COPY docker/fetch_piper_voice.py docker/prefetch_models.py /app/
+# Application code, copied flat so `uvicorn main:app` resolves (.dockerignore
+# keeps .env, local model caches, job data and tests out).
+COPY . /app/
 
 RUN useradd --create-home --uid 10001 app \
  && mkdir -p /app/data /models \
@@ -44,7 +46,7 @@ ENV CB_MODELS_DIR=/models \
 # Bake Whisper, MiniLM and the Piper voice into the image (~600 MB) so no
 # writable models volume is needed and boot doesn't download anything. Don't
 # mount over /models: an empty mount would hide these (Piper won't re-download).
-RUN python prefetch_models.py
+RUN python -m scripts.prefetch_models
 
 EXPOSE 8000
 

@@ -1,6 +1,6 @@
 # Chatterbot-AI — Production Deployment (Vercel + Fly.io + LiveKit Cloud)
 
-> **Status:** plan + config, **not yet deployed**. `fly.toml` and the Docker image
+> **Status:** plan + config, **not yet deployed**. `backend/fly.toml` and the Docker image
 > are written but have not been built or run on Fly yet — budget a first
 > deploy for fixing surprises. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 > §22 (image), [`E2E_TESTING.md`](./E2E_TESTING.md) §0 (open gaps).
@@ -25,7 +25,7 @@
 | Piece | Runs on | Notes |
 |---|---|---|
 | Frontend | **Vercel** (`frontend/`) | Static/SSR Next.js; calls the backend directly from the browser. |
-| Backend | **Fly.io** (`fly.toml` + `docker/Dockerfile`) | One always-on machine. Models baked into the image. |
+| Backend | **Fly.io** (`backend/fly.toml` + `backend/Dockerfile`, app dir `backend/`) | One always-on machine. Models baked into the image. |
 | Media | **LiveKit Cloud** | Existing `LIVEKIT_*` keys. The agent dials out to it, so Fly needs no UDP ports. |
 | LLM | Gemini API, Groq API | `GEMINI_API_KEY` primary, `GROQ_API_KEY` fallback. |
 
@@ -67,23 +67,40 @@ These come from the current code, not from Fly or Vercel:
 ## 4. Backend on Fly.io
 
 ### 4.1 What's in the image
-[`docker/Dockerfile`](../docker/Dockerfile):
+**`backend/` is the Fly app directory and the Docker build context.** Everything
+the image needs lives there: [`backend/Dockerfile`](../backend/Dockerfile),
+[`backend/fly.toml`](../backend/fly.toml), [`backend/.dockerignore`](../backend/.dockerignore),
+`backend/requirements*.txt` and `backend/scripts/`.
+
+The image:
 - `python:3.11-slim`, digest-pinned.
 - System packages: ffmpeg, libsndfile, tesseract, and LibreOffice + poppler for slide images.
 - CPU-only torch.
 - `requirements.txt` + `requirements-linux.txt` (Piper).
 - Runs as the non-root user `app`.
-- `docker/prefetch_models.py` bakes Whisper `small.en`, MiniLM and the Piper voice
+- `scripts/prefetch_models.py` bakes Whisper `small.en`, MiniLM and the Piper voice
   into `/models` at build time, so boot downloads nothing and no volume is needed.
 
 Expect a large image (several GB) and a slow first build.
 
 ### 4.2 Create the app
-From the repo root:
+**Option A — Fly dashboard ("Launch from GitHub"):**
+1. Set the app's **working directory / path to `backend`**. Fly then finds
+   `backend/fly.toml` and `backend/Dockerfile`. With the repo root (or with an
+   older checkout that predates this layout), launch fails with *"Could not find
+   a Dockerfile, nor detect a runtime or framework"*.
+2. Use the same app name and region as in `fly.toml`
+   (`chatterbot-backend`, `ams`), or edit `fly.toml` to match what you pick.
+3. Add the secrets from §4.3 in the launcher's environment section.
+4. After the first deploy, run `fly scale count 1 -a chatterbot-backend`. The
+   launcher may create two machines (§4.4).
+
+**Option B — CLI**, from `backend/`:
 
 ```bash
 fly auth login
-# Edit fly.toml first: set a unique `app` name and your `primary_region`
+cd backend
+# Edit fly.toml first if needed: unique `app` name, `primary_region`
 # (`fly platform regions`; pick one near your users AND your LiveKit Cloud region).
 fly apps create chatterbot-backend          # same name as in fly.toml
 ```
@@ -103,11 +120,13 @@ fly secrets set \
 Do **not** set `CB_LIVEKIT_PUBLIC_URL`. With LiveKit Cloud the browser and the
 agent use the same `wss://` URL.
 
-Non-secret settings live in `[env]` in [`fly.toml`](../fly.toml): `CB_TTS_BACKEND=piper`,
+Non-secret settings live in `[env]` in [`backend/fly.toml`](../backend/fly.toml): `CB_TTS_BACKEND=piper`,
 `CB_LLM_PRIMARY=gemini`, `CB_LOG_LEVEL=INFO`. Any `CB_*` setting from the README's
 configuration table can be added there.
 
 ### 4.4 Deploy
+From `backend/`:
+
 ```bash
 fly deploy --ha=false --wait-timeout 15m
 fly scale count 1            # make sure exactly ONE machine exists (constraint 1)
@@ -191,7 +210,7 @@ vercel --prod
 | List releases | `fly releases --image` |
 | Roll back | `fly deploy --image <previous image ref>` |
 | Rotate a key | `fly secrets set GEMINI_API_KEY=...` (triggers a restart) |
-| Switch LLM primary to Groq | set `CB_LLM_PRIMARY = "groq"` in `fly.toml`, `fly deploy` |
+| Switch LLM primary to Groq | set `CB_LLM_PRIMARY = "groq"` in `backend/fly.toml`, `fly deploy` from `backend/` |
 | Frontend rollback | Vercel dashboard → Deployments → promote a previous one |
 
 **Cost drivers:**

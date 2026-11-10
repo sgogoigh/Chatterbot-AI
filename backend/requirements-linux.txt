@@ -1,5 +1,5 @@
 # Chatterbot-AI — Linux/container-only extras (installed on top of requirements.txt).
-# These do not have Windows wheels; see docs/WINDOWS_TESTING.md / docs/ERRORS.md R12.
+# These do not have Windows wheels; see ../docs/WINDOWS_TESTING.md / ../docs/ERRORS.md R12.
 #
 #   pip install -r requirements.txt -r requirements-linux.txt
 #

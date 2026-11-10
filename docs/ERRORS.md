@@ -333,6 +333,21 @@ runtime voice fetch from PROBLEM 14.
 
 ---
 
+## PROBLEM 21 — Fly launch from `backend/` found no Dockerfile
+**Topic:** deployment (found at first Fly launch)
+**[Description & Effect]**
+Launching on Fly with the app path set to `backend/` failed with *"Could not
+find a Dockerfile, nor detect a runtime or framework"*: `fly.toml` was at the
+repo root, the Dockerfile in `docker/`, and the image needed the repo root as
+its build context (root `requirements*.txt` and `docker/` scripts).
+**FIX —** Made `backend/` self-contained: moved (`git mv`) `Dockerfile`,
+`fly.toml`, `.dockerignore`, `requirements*.txt` and the model scripts
+(`backend/scripts/`) into it. The Dockerfile now builds with `backend/` as its
+context, and compose builds from there too. Local install is
+`pip install -r backend/requirements.txt`.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with

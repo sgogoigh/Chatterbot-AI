@@ -1,0 +1,14 @@
+# Build context is backend/. Keep secrets, caches and large local artifacts out.
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+.venv/
+models/
+data/
+tests/
+fly.toml
+Dockerfile
+.dockerignore

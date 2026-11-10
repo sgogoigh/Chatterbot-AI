@@ -893,7 +893,7 @@ Mirrors the doc's two suites + the success-criteria gates. `pytest` + `pytest-as
 ## 22. Docker & compose
 
 ### 22.1 Dockerfile (corrected vs. doc — see R9, R13)
-See [`docker/Dockerfile`](../docker/Dockerfile). Shape:
+See [`backend/Dockerfile`](../backend/Dockerfile). The **build context is `backend/`**, which is also the Fly.io app directory (`backend/fly.toml`); compose builds from there too. Shape:
 ```dockerfile
 FROM python:3.11-slim@sha256:...           # digest-pinned
 RUN apt-get install ... ffmpeg libsndfile1 tesseract-ocr \
@@ -902,17 +902,16 @@ WORKDIR /app
 COPY requirements.txt requirements-linux.txt ./
 RUN pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
  && pip install -r requirements.txt -r requirements-linux.txt   # ADDED: CPU torch; Piper (R13)
-COPY backend/ /app/
-COPY docker/fetch_piper_voice.py docker/prefetch_models.py /app/
+COPY . /app/                               # backend/ incl. scripts/
 USER app                                   # ADDED: non-root
 ENV CB_MODELS_DIR=/models CB_DATA_DIR=/app/data
-RUN python prefetch_models.py              # ADDED: bake Whisper + MiniLM + Piper voice (R13)
+RUN python -m scripts.prefetch_models      # ADDED: bake Whisper + MiniLM + Piper voice (R13)
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 - **Models are baked into the image** by `prefetch_models.py`, which uses the backend's own `Settings` so names and paths match the services. Piper never auto-downloads; `fetch_piper_voice.py` pulls `{CB_PIPER_VOICE}.onnx` + `.onnx.json` from `rhasspy/piper-voices`. Silero VAD ships inside its package.
 - Why bake rather than mount a volume: Fly.io volumes mount root-owned, and the image runs as non-root; there's also no ~600 MB download on first boot.
 - CPU-only torch: `sentence-transformers` pulls torch, and PyPI's Linux wheel bundles several GB of unused CUDA libraries.
-- `.dockerignore` keeps `.env`, model caches, job data and the frontend out of the build context.
+- `backend/.dockerignore` keeps `.env`, local model caches, job data and tests out of the build context.
 
 ### 22.2 docker-compose
 - `backend` (this image, port 8000), env from the repo-root `.env` (same file local runs use); LiveKit Cloud by default.

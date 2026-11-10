@@ -12,15 +12,15 @@
 services:
   backend:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: ../backend        # same build context Fly.io uses
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     env_file:
       - ../.env
     volumes:
       # Job artifacts land where local runs put them. Models are baked into the
-      # image (docker/prefetch_models.py) — don't mount over /models: an empty
+      # image (backend/scripts/prefetch_models.py) — don't mount over /models: an empty
       # host dir would hide them, and Piper does not auto-download.
       - ../backend/data:/app/data
 

@@ -26,7 +26,7 @@ tests/         pure-logic unit tests + benchmark scaffolds (§21)
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate on Windows
-pip install -r ../requirements.txt
+pip install -r requirements.txt
 cp .env.example .env                                 # fill in keys
 uvicorn main:app --reload
 ```
@@ -60,7 +60,7 @@ Expected: PASS for embeddings, VAD, STT, intent, RAG.
 ### Platform notes (validated on Windows / Python 3.12)
 - **Piper TTS is Linux/macOS only.** `piper-tts` → `piper-phonemize` has no Windows
   wheel (recheck R12). On Windows, install everything except `piper-tts`
-  (`grep -v piper-tts ../requirements.txt > req.txt && pip install -r req.txt`)
+  (`grep -v piper-tts requirements.txt > req.txt && pip install -r req.txt`)
   and validate TTS inside the Docker image — the deployment target is Linux anyway.
 - **VAD uses pure onnxruntime** (no torch.hub / torchaudio); the Silero `.onnx`
   ships with the `silero-vad` package.
