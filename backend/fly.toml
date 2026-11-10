@@ -1,6 +1,9 @@
 # fly.toml app configuration file generated for chatterbot-backend on 2026-11-10T23:27:38Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# Project notes: docs/DEPLOYMENT.md. The backend keeps sessions in memory, so it
+# must run as exactly ONE always-on machine — after a launch/deploy that creates
+# two, run `fly scale count 1 -a chatterbot-backend`.
 #
 
 app = 'chatterbot-backend'
@@ -26,13 +29,19 @@ primary_region = 'ams'
     hard_limit = 100
     soft_limit = 50
 
+  # Fly caps grace_period at 1 minute. uvicorn only starts serving after models
+  # load, so on a shared CPU the first checks may fail; the deploy keeps checking
+  # until it passes (or the deploy's wait timeout).
   [[http_service.checks]]
     interval = '30s'
     timeout = '5s'
-    grace_period = '3m0s'
+    grace_period = '1m0s'
     method = 'GET'
     path = '/readyz'
 
+# The org can't use performance (dedicated-CPU) machines yet. Shared CPUs burst
+# above a small baseline, so real-time STT/TTS may lag under sustained load;
+# switch to size = 'performance-2x' once billing unlocks it.
 [[vm]]
-  size = 'performance-2x'
+  size = 'shared-cpu-4x'
   memory = '4gb'
