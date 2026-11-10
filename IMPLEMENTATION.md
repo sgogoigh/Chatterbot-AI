@@ -868,28 +868,30 @@ Mirrors the doc's two suites + the success-criteria gates. `pytest` + `pytest-as
 
 ## 22. Docker & compose
 
-### 22.1 Dockerfile (corrected vs. doc — see R9)
+### 22.1 Dockerfile (corrected vs. doc — see R9, R13)
+See [`docker/Dockerfile`](./docker/Dockerfile). Shape:
 ```dockerfile
 FROM python:3.11-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg libsndfile1 tesseract-ocr \
-    libreoffice-core poppler-utils \      # ADDED: slide rasterization (R9)
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get install ... ffmpeg libsndfile1 tesseract-ocr \
+    libreoffice-core poppler-utils         # ADDED: slide rasterization (R9)
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-linux.txt ./
+RUN pip install -r requirements.txt -r requirements-linux.txt   # ADDED: Piper (R13)
 COPY backend/ /app/
+COPY docker/fetch_piper_voice.py /app/   # ADDED: downloads the Piper voice (R13)
+USER app                                  # ADDED: non-root
 ENV CB_MODELS_DIR=/models
-EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD sh -c "python fetch_piper_voice.py && exec uvicorn main:app --host 0.0.0.0 --port 8000"
 ```
-- Models are downloaded to a **mounted volume** `/models` on first run (Whisper/MiniLM/Piper auto-download); cache it to avoid re-pulling ~500 MB each boot.
+- Whisper/MiniLM auto-download to the **mounted volume** `/models` on first run. Piper does **not** auto-download: `fetch_piper_voice.py` pulls `{CB_PIPER_VOICE}.onnx` + `.onnx.json` from `rhasspy/piper-voices` into `/models/piper/` before the server starts.
+- `.dockerignore` keeps `.env`, model caches, job data and the frontend out of the build context.
 
 ### 22.2 docker-compose
-- `backend` (this image, ports 8000), env from `.env`.
-- `livekit` (official `livekit/livekit-server`) for self-hosted WebRTC signaling, OR use LiveKit Cloud (then only `backend`).
+- `backend` (this image, port 8000), env from `backend/.env`.
+- `livekit` (`livekit/livekit-server:v1.8`, `--dev`) for self-hosted WebRTC, OR use LiveKit Cloud (then only `backend`).
 - Optional `ollama` service for the LLM fallback.
-- Volumes: `./data` (job artifacts), `./models` (model cache).
+- Volumes: `backend/data` → `/app/data` (job artifacts), repo-root `models/` → `/models` (model cache) — the same paths local runs use.
+- Inside compose the backend reaches LiveKit at `ws://livekit:7880` but the browser needs `ws://localhost:7880`: set `CB_LIVEKIT_PUBLIC_URL` for the URL returned by `POST /api/sessions` (R14).
 
 ---
 
@@ -944,6 +946,8 @@ This section is the deliverable's "rechecks for mistakes / gaps." Each item is a
 | **R-persona** | Spec gap | Persona vs Track relationship undefined. | Persona = WPM/buffer; Track = verbosity variant; they compose; §15.1. |
 | **R12** | **Platform gap (found at validation)** | `piper-tts` → `piper-phonemize` has **no Windows wheel** (Linux/macOS-only C++/espeak-ng ext). Blocks local Windows installs. | Piper runs in the Linux Docker image (deployment target). For local Windows dev, install everything except `piper-tts`; validate TTS in-container. Documented in backend/README. |
 | **R1-fix** | **Dependency conflict (found at validation)** | `livekit==0.17.*` pin conflicts with `livekit-agents` (needs `livekit>=0.18.1`). | Don't hard-pin `livekit`; let `livekit-agents>=0.12,<0.13` resolve a compatible rtc SDK (`livekit>=0.18,<1`). Fixed in requirements.txt + §2.2. |
+| **R13** | **Deployment bug (found at status review)** | Dockerfile installed only `requirements.txt`, so Piper — which `tts_backend=auto` selects on Linux — was missing; nothing downloaded the Piper voice either. | Install `requirements-linux.txt`; `docker/fetch_piper_voice.py` fetches the voice on container start. §22.1. |
+| **R14** | **Deployment bug (found at status review)** | One `livekit_url` served both the agent (inside compose) and the browser (outside). | Added `CB_LIVEKIT_PUBLIC_URL` (browser URL; defaults to `livekit_url`). §22.2. |
 | **R6-fix** | **Bug (found at validation)** | VAD drafted via `torch.hub(onnx=True)` transitively needs `torchaudio` (not in reqs) → import crash. | Rewrote `VADService` to pure onnxruntime over the `silero-vad`-bundled `.onnx` (located without importing the package). No torch.hub/torchaudio. Validated 0.2 ms. §10. |
 
 ### Validation status (local venv, Python 3.12 / Windows)
@@ -967,4 +971,4 @@ Ran `backend/tests/validate_ml.py` against real model weights:
 
 ---
 
-*End of backend implementation spec. Frontend (`Next.js`) implementation is intentionally deferred to a separate document.*
+*End of backend implementation spec. The Next.js frontend lives in [`frontend/`](./frontend/) (see its README); current project status and open gaps are tracked in [`E2E_TESTING.md`](./E2E_TESTING.md) §0.*

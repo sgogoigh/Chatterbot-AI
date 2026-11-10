@@ -125,9 +125,10 @@ Defaults are sensible; override in `.env`.
 | `GROQ_API_KEY` | — | LLM (answers + script generation) |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | — | live voice session |
+| `CB_LIVEKIT_PUBLIC_URL` | same as `LIVEKIT_URL` | LiveKit URL handed to the browser; set it only when the backend reaches LiveKit by an internal name (Docker: backend uses `ws://livekit:7880`, browser uses `ws://localhost:7880`) |
 | `CB_STT_BACKEND` | `local` | `local` (Faster-Whisper, offline) or `groq` (whisper-large-v3-turbo, more accurate) |
 | `CB_TTS_BACKEND` | `auto` | `auto` → edge-tts on Windows, Piper in Docker |
-| `CB_MODELS_DIR` | `models` | where models are cached/downloaded |
+| `CB_MODELS_DIR` | `models` | where models are cached/downloaded (pytest defaults it to the repo-root `models/`) |
 | `NEXT_PUBLIC_API_BASE` *(frontend)* | `http://localhost:8000` | backend URL the UI calls |
 
 ---
@@ -194,6 +195,29 @@ Chatterbot-AI/
 
 ## Deployment (Linux / Docker)
 
-For a containerized deploy (with Piper TTS), use `docker/Dockerfile` +
-`docker/docker-compose.yml` and install `requirements.txt -r requirements-linux.txt`.
+The image installs `requirements.txt` + `requirements-linux.txt` (Piper TTS),
+fetches the Piper voice into the models volume on first start, and runs as a
+non-root user. From the repo root:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+For the bundled self-hosted LiveKit (`--dev` mode), set in `backend/.env`:
+
+```
+CB_LIVEKIT_URL=ws://livekit:7880
+CB_LIVEKIT_PUBLIC_URL=ws://localhost:7880
+CB_LIVEKIT_API_KEY=devkey
+CB_LIVEKIT_API_SECRET=secret
+```
+
+Compose mounts `backend/data` and the repo-root `models/`, so jobs and the model
+cache are shared with local runs. `.env` files and model caches are excluded from
+the image by `.dockerignore`. The container path has not been run end-to-end yet
+(see [`E2E_TESTING.md`](./E2E_TESTING.md) §0).
+
+`test_assets/clips/` (personal voice recordings) is gitignored; `run_clips.py`
+needs you to record your own clips from `test_assets/CLIP_SCRIPT.md`.
+
 See [`WINDOWS_TESTING.md`](./WINDOWS_TESTING.md) §1 for why Docker is optional locally.

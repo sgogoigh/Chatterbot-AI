@@ -222,6 +222,72 @@ opt-in accuracy upgrade.
 
 ---
 
+## PROBLEM 13 — `frontend/lib/` silently excluded from git
+**Topic:** repo hygiene (found at status review)
+**[Description & Effect]**
+The root `.gitignore` is the stock Python template; its `lib/` rule (for
+`build/lib/` packaging dirs) also matched `frontend/lib/`. `api.ts`, `livekit.ts`
+and `types.ts` — imported by every component — were never committed. Effect: the
+frontend built locally but a fresh clone failed to compile (`@/lib/*` not found).
+`test_assets/` was ignored wholesale too, so the sample deck used by the README
+and `run_clips.py` was missing.
+**FIX —** Anchored the rule to the repo root (`/lib/`, `/lib64/`) and committed the
+three files. Narrowed `test_assets/` to `test_assets/clips/`: the deck and
+`CLIP_SCRIPT.md` are tracked, personal voice recordings stay local.
+
+---
+
+## PROBLEM 14 — Docker image could not run TTS
+**Topic:** deployment (found at status review) — IMPLEMENTATION.md R13
+**[Description & Effect]**
+The Dockerfile installed only `requirements.txt`. Piper lives in
+`requirements-linux.txt`, and on Linux `tts_backend=auto` selects Piper, so the
+container would fail at TTS init. Separately, `TTSService` loads
+`{models_dir}/piper/<voice>.onnx` but nothing downloaded it. There was also no
+`.dockerignore`, so `COPY backend/` would bake `backend/.env` (API keys), model
+caches and job data into the image.
+**FIX —** Install both requirement files; `docker/fetch_piper_voice.py` fetches the
+voice + config from `rhasspy/piper-voices` into the models volume before uvicorn
+starts; added `.dockerignore`; the image runs as a non-root user.
+
+---
+
+## PROBLEM 15 — Compose paths and LiveKit URL mismatched
+**Topic:** deployment (found at status review) — IMPLEMENTATION.md R14
+**[Description & Effect]**
+Compose mounted `../data` and `docker/models`, while local runs use `backend/data`
+and the repo-root `models/` — so the container re-downloaded ~570 MB and couldn't
+see local jobs. `livekit-server:latest` floated. And a single `livekit_url` was
+used for both the in-compose agent (`ws://livekit:7880`) and the browser, which
+can't resolve that hostname.
+**FIX —** Mounted the local paths, pinned `livekit-server:v1.8`, and added
+`CB_LIVEKIT_PUBLIC_URL` (browser-facing URL, defaults to `livekit_url`).
+
+---
+
+## PROBLEM 16 — Two React-hooks lint errors
+**Topic:** frontend code quality (found at status review)
+**[Description & Effect]**
+`Presenter.tsx` reset the image-failed flag with `setState` inside an effect on
+every slide change (cascading renders); `VoiceOrb.tsx` wrote a ref during render.
+`eslint` failed with 2 errors.
+**FIX —** Presenter derives the flag from the index of the slide whose image
+failed; VoiceOrb updates the ref inside an effect. `eslint` and `tsc` clean.
+
+---
+
+## PROBLEM 17 — Upload buffered entirely in memory before the size check
+**Topic:** API robustness (found at status review)
+**[Description & Effect]**
+`POST /api/presentations` did `await file.read()` and only then compared against
+`max_upload_mb`, so an oversized upload was held fully in memory. Rejected
+uploads also left an empty job directory behind.
+**FIX —** Stream to disk in 1 MiB chunks, return `413` as soon as the limit is
+crossed, and remove the job directory on 413/422. Smoke-checked: a 2 MB upload
+with a 1 MB limit → `413`, no leftover job dir.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with
