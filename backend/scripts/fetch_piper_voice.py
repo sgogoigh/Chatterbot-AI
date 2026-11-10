@@ -1,10 +1,10 @@
 """
-docker/fetch_piper_voice.py — download the configured Piper voice if missing.
+scripts/fetch_piper_voice.py — download the configured Piper voice if missing.
 
 Piper's TTSService loads ``{CB_MODELS_DIR}/piper/{CB_PIPER_VOICE}.onnx`` (plus its
-``.onnx.json`` config) but nothing else downloads it. The container runs this
-before uvicorn so the voice lands on the mounted models volume on first start
-and is reused afterwards.
+``.onnx.json`` config) but nothing else downloads it. ``prefetch_models`` calls
+this during ``docker build`` so the voice is baked into the image; it is a no-op
+when the files already exist.
 
 Voice names follow Piper's ``<lang>_<REGION>-<name>-<quality>`` convention, e.g.
 ``en_US-lessac-medium``, which maps to the rhasspy/piper-voices repo layout

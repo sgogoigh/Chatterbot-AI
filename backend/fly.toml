@@ -4,14 +4,17 @@
 # it MUST run as exactly one always-on machine: no auto-stop (would kill live
 # sessions and force a slow model reload) and no horizontal scaling.
 #
-# No volume: model weights are baked into the image (docker/prefetch_models.py)
+# No volume: model weights are baked into the image (scripts/prefetch_models.py)
 # and job data is ephemeral (the backend clears it on every start).
+#
+# Lives in backend/ so Fly launches/deploys with backend/ as the working dir and
+# build context: `cd backend && fly deploy`, or set the launcher's path to backend/.
 
 app = "chatterbot-backend"        # change to your unique Fly app name
-primary_region = "bom"            # pick the region nearest your users + LiveKit Cloud region
+primary_region = "ams"            # keep near your LiveKit Cloud region and users
 
 [build]
-  dockerfile = "docker/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   CB_TTS_BACKEND = "piper"

@@ -68,7 +68,7 @@ python -m venv .venv
 #   Windows (cmd):         .venv\Scripts\activate.bat
 #   Git Bash / macOS / Linux: source .venv/Scripts/activate   (Windows)
 #                              source .venv/bin/activate        (macOS/Linux)
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # run the API (from the backend/ folder)
 cd backend
@@ -83,7 +83,7 @@ python -m uvicorn main:app --port 8000
 - Check it's up: open <http://localhost:8000/healthz> → `{"status":"ok"}`.
 
 > Windows note: TTS uses **edge-tts** (free, automatic). The Linux-only Piper
-> package is excluded from `requirements.txt` and lives in `requirements-linux.txt`
+> package is excluded from `backend/requirements.txt` and lives in `backend/requirements-linux.txt`
 > for the Docker image — you don't need it on Windows.
 
 ---
@@ -182,7 +182,7 @@ status, and [`ERRORS.md`](./docs/ERRORS.md) for issues found + fixed along the w
 - **A spoken question is misheard.** Local `small.en` is fast but small; set
   `CB_STT_BACKEND=groq` in `.env` for higher accuracy (needs the Groq key).
 - **`pip install` fails on `piper-tts` (Windows).** It shouldn't — Piper isn't in
-  `requirements.txt`. Make sure you're installing `requirements.txt`, not
+  `backend/requirements.txt`. Make sure you're installing `backend/requirements.txt`, not
   `requirements-linux.txt`.
 
 ---
@@ -194,9 +194,10 @@ Chatterbot-AI/
 ├── backend/         FastAPI app, services, agent (see backend/README.md)
 ├── frontend/        Next.js app (see frontend/README.md)
 ├── test_assets/     sample deck + voice clips for testing
-├── docker/          Dockerfile + compose (Linux deploy)
-├── requirements.txt           cross-platform backend deps (Windows-friendly)
-├── requirements-linux.txt     Piper TTS (container only)
+├── docker/          docker compose files (local container runs)
+├── backend/requirements.txt           cross-platform backend deps (Windows-friendly)
+├── backend/requirements-linux.txt     Piper TTS (container only)
+├── backend/Dockerfile · backend/fly.toml   image + Fly.io config (build context: backend/)
 ├── docs/            PLAN · IMPLEMENTATION · E2E_TESTING · WINDOWS_TESTING · ERRORS · DEPLOYMENT
 └── .env             your credentials (not committed)
 ```
@@ -208,7 +209,7 @@ For production (Vercel frontend + Fly.io backend + LiveKit Cloud), see
 
 The image installs `requirements.txt` + `requirements-linux.txt` (Piper TTS) with
 CPU-only torch, **bakes the Whisper / MiniLM / Piper weights in at build time**
-(`docker/prefetch_models.py`), and runs as a non-root user. From the repo root
+(`backend/scripts/prefetch_models.py`), and runs as a non-root user. From the repo root
 (uses the repo-root `.env`, LiveKit Cloud):
 
 ```bash

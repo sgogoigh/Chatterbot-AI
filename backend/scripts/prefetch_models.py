@@ -1,8 +1,8 @@
 """
-docker/prefetch_models.py — bake model weights into the image at build time.
+scripts/prefetch_models.py — bake model weights into the image at build time.
 
-Runs from /app (the backend code) during ``docker build`` as the non-root app
-user, using the backend's own Settings so model names and cache paths match
+Runs as ``python -m scripts.prefetch_models`` from /app (the backend code) during
+``docker build`` as the non-root app user, using the backend's own Settings so model names and cache paths match
 exactly what the services load at runtime:
 
   * Faster-Whisper ``whisper_model``  -> WhisperModel(download_root=models_dir)
@@ -39,7 +39,7 @@ def main() -> int:
     SentenceTransformer(s.minilm_model, cache_folder=s.models_dir)
     print(f"  minilm {s.minilm_model}: ok", flush=True)
 
-    import fetch_piper_voice
+    from scripts import fetch_piper_voice
 
     if fetch_piper_voice.main() != 0:
         return 1
