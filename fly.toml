@@ -1,0 +1,45 @@
+# Fly.io config for the Chatterbot-AI backend. Guide: docs/DEPLOYMENT.md.
+#
+# The backend keeps sessions, jobs and the in-process LiveKit agent in memory, so
+# it MUST run as exactly one always-on machine: no auto-stop (would kill live
+# sessions and force a slow model reload) and no horizontal scaling.
+#
+# No volume: model weights are baked into the image (docker/prefetch_models.py)
+# and job data is ephemeral (the backend clears it on every start).
+
+app = "chatterbot-backend"        # change to your unique Fly app name
+primary_region = "bom"            # pick the region nearest your users + LiveKit Cloud region
+
+[build]
+  dockerfile = "docker/Dockerfile"
+
+[env]
+  CB_TTS_BACKEND = "piper"
+  CB_LLM_PRIMARY = "gemini"
+  CB_LOG_LEVEL = "INFO"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  # /readyz returns 503 until models are loaded + warmed (no download: they are
+  # in the image, but loading + warmup + the LLM probe still take a while).
+  [[http_service.checks]]
+    method = "GET"
+    path = "/readyz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "180s"
+
+[[vm]]
+  # Real-time CPU STT/VAD + MiniLM + Piper: dedicated CPUs, 4 GB RAM.
+  size = "performance-2x"
+  memory = "4gb"

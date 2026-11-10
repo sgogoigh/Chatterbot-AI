@@ -1,7 +1,7 @@
-# Chatterbot-AI backend image (IMPLEMENTATION.md §22.1).
+# Chatterbot-AI backend image (docs/IMPLEMENTATION.md §22.1).
 # Corrected vs. the source doc: adds libreoffice-core + poppler-utils for
 # full-slide rasterization (recheck R9), which python-pptx cannot do alone.
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
 # System dependencies:
 #   ffmpeg/libsndfile1  — audio decode/encode
@@ -22,21 +22,30 @@ WORKDIR /app
 # TTS (no Windows wheel, R12) — on Linux tts_backend=auto selects Piper, so the
 # image must have it.
 COPY requirements.txt requirements-linux.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-linux.txt
+# CPU-only torch first: sentence-transformers pulls torch transitively, and the
+# default Linux wheel from PyPI bundles several GB of CUDA libraries this CPU
+# image never uses.
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir -r requirements.txt -r requirements-linux.txt
 
 # Application code (backend/ is copied flat so `uvicorn main:app` resolves).
 COPY backend/ /app/
-COPY docker/fetch_piper_voice.py /app/fetch_piper_voice.py
+COPY docker/fetch_piper_voice.py docker/prefetch_models.py /app/
 
-# Run as a non-root user; it owns the job-data dir and the models mount point.
 RUN useradd --create-home --uid 10001 app \
  && mkdir -p /app/data /models \
  && chown -R app:app /app/data /models
 USER app
 
-# Models cache to a mounted volume on first run (Whisper/MiniLM auto-download;
-# the Piper voice is fetched by fetch_piper_voice.py before the server starts).
-ENV CB_MODELS_DIR=/models
+ENV CB_MODELS_DIR=/models \
+    CB_DATA_DIR=/app/data \
+    HF_HUB_DISABLE_SYMLINKS_WARNING=1
+
+# Bake Whisper, MiniLM and the Piper voice into the image (~600 MB) so no
+# writable models volume is needed and boot doesn't download anything. A
+# compose bind mount over /models still overrides this for local runs.
+RUN python prefetch_models.py
+
 EXPOSE 8000
 
-CMD ["sh", "-c", "python fetch_piper_voice.py && exec uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

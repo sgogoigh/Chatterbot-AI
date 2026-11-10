@@ -19,10 +19,10 @@ services:
     env_file:
       - ../.env
     volumes:
-      # Same locations a local run uses (backend/data, repo-root models/), so jobs
-      # and the ~570 MB model cache are shared between local and container runs.
+      # Job artifacts land where local runs put them. Models are baked into the
+      # image (docker/prefetch_models.py) — don't mount over /models: an empty
+      # host dir would hide them, and Piper does not auto-download.
       - ../backend/data:/app/data
-      - ../models:/models
 
   # Self-hosted WebRTC signaling/media — only with --profile local-livekit.
   livekit:
