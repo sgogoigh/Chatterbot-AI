@@ -15,3 +15,10 @@ import sys
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
+
+# Default the model cache to the repo-root models/ that the README and local runs
+# use, so a bare ``pytest`` doesn't re-download ~570 MB into backend/models/.
+# An explicit CB_MODELS_DIR still wins.
+os.environ.setdefault(
+    "CB_MODELS_DIR", os.path.join(os.path.dirname(BACKEND_ROOT), "models")
+)
