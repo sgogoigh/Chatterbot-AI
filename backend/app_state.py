@@ -42,6 +42,10 @@ class JobStore:
         """Return the job record for ``job_id`` or None if unknown."""
         return self._jobs.get(job_id)
 
+    def remove(self, job_id: str) -> None:
+        """Drop a job record (e.g. when its artifacts are purged on session end)."""
+        self._jobs.pop(job_id, None)
+
 
 class BuildStore:
     """Tracks progress of asynchronous build tasks (§7.1)."""
@@ -102,6 +106,10 @@ class SessionManager:
     def active_count(self) -> int:
         """Number of live sessions (used to enforce the single-session constraint)."""
         return len(self._sessions)
+
+    def active_ids(self) -> list[str]:
+        """Snapshot of live session ids (for reclaiming stale/orphaned sessions)."""
+        return list(self._sessions.keys())
 
 
 # Process-wide singletons (single-instance deployment, §7.1).

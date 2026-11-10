@@ -52,6 +52,15 @@ class KnowledgeBase:
         self._stores[job_id] = store
         return len(chunks)
 
+    def evict(self, job_id: str) -> None:
+        """Drop a job's in-memory store to free RAM (disk cleanup is the caller's job).
+
+        Called when a session ends/reloads so a finished presentation's index isn't
+        held in memory. A later retrieve() would lazily reload from disk if the
+        artifacts still exist; if they were also purged, the job is simply gone.
+        """
+        self._stores.pop(job_id, None)
+
     def load(self, job_id: str) -> None:
         """Lazily load a job's persisted indexes into memory (§17.2).
 

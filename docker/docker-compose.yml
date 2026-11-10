@@ -1,7 +1,13 @@
-# Chatterbot-AI orchestration (IMPLEMENTATION.md §22.2).
-# Single-instance backend + optional self-hosted LiveKit + optional Ollama fallback.
-# Use LiveKit Cloud instead by dropping the `livekit` service and pointing
-# CB_LIVEKIT_URL at the cloud endpoint.
+# Chatterbot-AI orchestration (docs/IMPLEMENTATION.md §22.2).
+# Single-instance backend; LiveKit Cloud by default, optional self-hosted LiveKit
+# and Ollama fallback. Production deployment (Vercel + Fly.io): docs/DEPLOYMENT.md.
+#
+# Run from the repo root (reads the repo-root .env, same file local runs use):
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Self-hosted LiveKit instead of Cloud (dev mode, devkey/secret):
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local-livekit.yml \
+#     --profile local-livekit up --build
 
 services:
   backend:
@@ -11,23 +17,24 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ../backend/.env
+      - ../.env
     volumes:
-      - ../data:/app/data        # job artifacts (slides, scripts, RAG indexes)
-      - ./models:/models         # model cache (avoids re-downloading ~500MB)
-    depends_on:
-      - livekit
+      # Job artifacts land where local runs put them. Models are baked into the
+      # image (docker/prefetch_models.py) — don't mount over /models: an empty
+      # host dir would hide them, and Piper does not auto-download.
+      - ../backend/data:/app/data
 
-  # Self-hosted WebRTC signaling/media (omit if using LiveKit Cloud).
+  # Self-hosted WebRTC signaling/media — only with --profile local-livekit.
   livekit:
-    image: livekit/livekit-server:latest
-    command: --dev          # dev mode; supply a config + keys for production
+    profiles: ["local-livekit"]
+    image: livekit/livekit-server:v1.8
+    command: --dev --bind 0.0.0.0   # dev mode (devkey/secret); supply a config + keys for production
     ports:
       - "7880:7880"         # signaling (ws)
       - "7881:7881"         # rtc/tcp
       - "7882:7882/udp"     # rtc/udp
 
-  # Optional local LLM fallback (IMPLEMENTATION.md §18.3). Uncomment to enable.
+  # Optional local LLM fallback (docs/IMPLEMENTATION.md §18.3). Uncomment to enable.
   # ollama:
   #   image: ollama/ollama:latest
   #   ports:

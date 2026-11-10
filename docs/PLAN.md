@@ -460,6 +460,7 @@ Documented as an **8-week, 4-phase** plan.
 4. **Personas vs. tracks.** Clarify the relationship between personas (GENERAL/TEACHER/MEETING/TEDX) and pacing tracks (STANDARD/SUMMARY/TURBO) in the budget model.
 5. **LLM model choice.** Doc mentions 
 both "Llama 3 70B" (feasibility) and a generic "Groq-backed LLM / Llama." Pin the exact model + the Ollama fallback model.
+   > **Resolved (2026-11-11):** Gemini `gemini-3.8-flash` primary → Groq `openai/gpt-oss-120b` (Llama 3.x 70B has been retired from Groq) → Ollama `llama3.1:8b`. See [IMPLEMENTATION.md §18](./IMPLEMENTATION.md#18-llmservice-gemini--groq--ollama-chain).
 
 > **Open questions for the user before build:** scope of "improvements" implied by the rename; whether multilingual / GPU / hybrid-BM25 move from "future work" into v1; target hardware for the improved build.
 

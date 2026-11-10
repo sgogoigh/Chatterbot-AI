@@ -27,7 +27,7 @@ from models import (
     SlideScript,
     Track,
 )
-from services.groq_llm_service import GroqLLMService
+from services.llm_service import LLMService
 from utils.logging import get_logger
 from utils.text import split_sentences, word_count
 
@@ -37,7 +37,7 @@ log = get_logger(component="slides")
 class SlideProcessor:
     """Extracts content from .pptx files and generates per-track narration scripts."""
 
-    def __init__(self, settings: Settings, llm: GroqLLMService):
+    def __init__(self, settings: Settings, llm: LLMService):
         """Hold config + the LLM client used for script generation."""
         self.s = settings
         self.llm = llm

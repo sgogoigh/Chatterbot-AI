@@ -1,10 +1,10 @@
 # Chatterbot-AI — Backend
 
 Real-time, full-duplex voice presentation agent. This package implements the
-backend specified in [`../IMPLEMENTATION.md`](../IMPLEMENTATION.md) (read that
+backend specified in [`../IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) (read that
 first — every module here cites the section it implements).
 
-## Layout (see IMPLEMENTATION.md §3)
+## Layout (see ../docs/IMPLEMENTATION.md §3)
 
 ```
 main.py        FastAPI app + lifespan + LiveKit agent bootstrap (§6, §8.2)
@@ -32,7 +32,7 @@ uvicorn main:app --reload
 ```
 
 The REST control plane (upload / build / RAG) works without LiveKit; live voice
-sessions need `CB_LIVEKIT_*` configured. See IMPLEMENTATION.md §22 for Docker.
+sessions need `CB_LIVEKIT_*` configured. See ../docs/IMPLEMENTATION.md §22 for Docker and ../docs/DEPLOYMENT.md for production.
 
 ## Tests
 

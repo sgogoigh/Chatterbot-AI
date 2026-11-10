@@ -74,10 +74,32 @@ class Settings(BaseSettings):
         default=None, validation_alias=AliasChoices("CB_GROQ_API_KEY", "GROQ_API_KEY")
     )
     groq_model: str = Field(                       # R7: model ids drift over time
-        default="llama-3.3-70b-versatile",
+        # llama-3.3-70b-versatile was retired by Groq (404 model_not_found, 2026-11).
+        default="openai/gpt-oss-120b",
         validation_alias=AliasChoices("CB_GROQ_MODEL", "GROQ_MODEL"),
     )
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    # gpt-oss is a reasoning model: reasoning tokens count against max_tokens.
+    # Empty effort => field omitted (for non-reasoning models).
+    groq_reasoning_effort: str = "low"
+    groq_thinking_headroom_tokens: int = 512
+    # Which cloud LLM is tried first; the other (if keyed) is the fallback, then
+    # Ollama. gemini | groq.
+    llm_primary: str = "gemini"
+    gemini_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CB_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    gemini_model: str = Field(
+        default="gemini-3.8-flash",
+        validation_alias=AliasChoices("CB_GEMINI_MODEL", "GEMINI_MODEL"),
+    )
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    # Gemini 3.x Flash always thinks: low | medium | high ("minimal" is rejected).
+    gemini_reasoning_effort: str = "low"
+    # Thinking tokens count against max_tokens; this is added on Gemini calls so
+    # short answer caps don't come back empty.
+    gemini_thinking_headroom_tokens: int = 1024
     llm_timeout_s: float = 20.0
     llm_max_answer_tokens: int = 300
     ollama_base_url: str = "http://localhost:11434"   # graceful fallback target
@@ -87,6 +109,10 @@ class Settings(BaseSettings):
     livekit_url: str = Field(
         default="", validation_alias=AliasChoices("CB_LIVEKIT_URL", "LIVEKIT_URL")
     )
+    # URL handed to the BROWSER. Empty => same as livekit_url. Set it when the
+    # backend reaches LiveKit by an internal name (docker compose: ws://livekit:7880)
+    # that the browser can't resolve (ws://localhost:7880).
+    livekit_public_url: str = ""
     livekit_api_key: str = Field(
         default="", validation_alias=AliasChoices("CB_LIVEKIT_API_KEY", "LIVEKIT_API_KEY")
     )

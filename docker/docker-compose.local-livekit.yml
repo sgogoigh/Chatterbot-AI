@@ -1,0 +1,12 @@
+# Override: point the backend at the self-hosted `livekit` service instead of the
+# LiveKit Cloud keys in .env. Use with --profile local-livekit (see docker-compose.yml).
+# CB_-prefixed names take precedence over LIVEKIT_* from .env.
+services:
+  backend:
+    environment:
+      CB_LIVEKIT_URL: ws://livekit:7880            # backend -> server, inside compose
+      CB_LIVEKIT_PUBLIC_URL: ws://localhost:7880   # URL handed to the browser
+      CB_LIVEKIT_API_KEY: devkey                   # livekit-server --dev defaults
+      CB_LIVEKIT_API_SECRET: secret
+    depends_on:
+      - livekit

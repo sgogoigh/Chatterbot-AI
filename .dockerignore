@@ -1,0 +1,15 @@
+# Keep secrets, caches and large local artifacts out of the image build context.
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+.venv/
+.git/
+models/
+backend/models/
+backend/data/
+data/
+test_assets/
+frontend/

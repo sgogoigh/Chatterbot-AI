@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "./Toast";
 import type { Persona } from "@/lib/types";
 
 /* Step 2 — set the contract: how it should sound, and how long it must take. */
@@ -26,16 +27,15 @@ export default function Configurator({
   const [persona, setPersona] = useState<Persona>("GENERAL");
   const [minutes, setMinutes] = useState(10);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
 
   async function start() {
     setBusy(true);
-    setError(null);
     try {
       await api.build(jobId, minutes, persona);
       onBuilding();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't start the build.");
+      notify(e instanceof Error ? e.message : "Couldn't start the build.");
       setBusy(false);
     }
   }
@@ -107,12 +107,6 @@ export default function Configurator({
       >
         {busy ? "Starting…" : `Build the ${minutes}-minute delivery`}
       </button>
-
-      {error && (
-        <p className="mt-4 text-sm text-over" role="alert">
-          {error}
-        </p>
-      )}
     </div>
   );
 }

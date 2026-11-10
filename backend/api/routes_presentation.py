@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import uuid
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -36,6 +37,8 @@ from models import (
 
 router = APIRouter(prefix="/api/presentations", tags=["presentation"])
 
+_UPLOAD_CHUNK = 1024 * 1024   # 1 MiB read size for streaming uploads to disk
+
 
 @router.post("", response_model=UploadResponse)
 async def upload_presentation(request: Request, file: UploadFile = File(...)) -> UploadResponse:
@@ -54,11 +57,20 @@ async def upload_presentation(request: Request, file: UploadFile = File(...)) ->
     os.makedirs(job_dir, exist_ok=True)
     pptx_path = os.path.join(job_dir, "source.pptx")
 
-    data = await file.read()
-    if len(data) > settings.max_upload_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="file too large")
-    with open(pptx_path, "wb") as f:
-        f.write(data)
+    # Stream to disk in bounded chunks so an oversized upload is rejected after
+    # max_upload_mb is exceeded, without ever holding the whole body in memory.
+    limit = settings.max_upload_mb * 1024 * 1024
+    written = 0
+    try:
+        with open(pptx_path, "wb") as f:
+            while chunk := await file.read(_UPLOAD_CHUNK):
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(status_code=413, detail="file too large")
+                f.write(chunk)
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)   # don't leave a half-written job
+        raise
 
     registry = request.app.state.registry
     try:
@@ -66,6 +78,7 @@ async def upload_presentation(request: Request, file: UploadFile = File(...)) ->
             registry.slides.extract, pptx_path, job_dir
         )
     except ValueError as e:                       # e.g. slide-count out of range
+        shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     jobs.put(JobRecord(job_id=job_id, slides=slides))

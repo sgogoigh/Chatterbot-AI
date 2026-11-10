@@ -226,6 +226,9 @@ class StubKB:
         """Pretend to index; return the chunk count (= number of slides here)."""
         return len(slides)
 
+    def evict(self, job_id: str) -> None:
+        """No-op (no in-memory store to drop); matches the real KB interface."""
+
 
 class StubSlideProcessor:
     """Stub for SlideProcessor: canned extraction + script generation (no pptx/LLM).

@@ -29,7 +29,7 @@ class ServiceRegistry:
         self.stt = None             # STTService
         self.tts = None             # TTSService
         self.intent = None          # FastIntentClassifier
-        self.llm = None             # GroqLLMService
+        self.llm = None             # LLMService (Gemini / Groq / Ollama chain)
         self.kb = None              # KnowledgeBase
         self.slides = None          # SlideProcessor
         self._ready = False
@@ -52,10 +52,10 @@ class ServiceRegistry:
         self.vad = await asyncio.to_thread(VADService, s)
 
     async def load_stt(self, s: Settings) -> None:
-        """Load the Faster-Whisper STT model."""
-        from services.stt_service import STTService
+        """Load the configured STT backend (local Faster-Whisper or cloud Groq Whisper)."""
+        from services.stt_factory import make_stt
 
-        self.stt = await asyncio.to_thread(STTService, s)
+        self.stt = await asyncio.to_thread(make_stt, s)
 
     async def load_tts(self, s: Settings) -> None:
         """Load the configured TTS backend (edge on Windows, piper in container).
@@ -83,11 +83,11 @@ class ServiceRegistry:
         )
         from core.knowledge_base import KnowledgeBase
         from services.fast_intent_classifier import FastIntentClassifier
-        from services.groq_llm_service import GroqLLMService
+        from services.llm_service import LLMService
         from services.slide_processor import SlideProcessor
 
         self.intent = FastIntentClassifier(self.embeddings)
-        self.llm = GroqLLMService(s)
+        self.llm = LLMService(s)
         self.kb = KnowledgeBase(s, self.embeddings)
         self.slides = SlideProcessor(s, self.llm)
 
@@ -104,6 +104,13 @@ class ServiceRegistry:
                     await asyncio.to_thread(obj.warmup)
             except Exception as e:  # noqa: BLE001 - warmup is best-effort
                 log.warning(f"warmup failed for {name}: {e}")
+        # Probe each LLM backend so a retired model id / bad key is visible in the
+        # boot log (R7). Logged, never fatal: the chain degrades gracefully.
+        if self.llm is not None and hasattr(self.llm, "health_check"):
+            try:
+                await self.llm.health_check()
+            except Exception as e:  # noqa: BLE001 - probe is best-effort
+                log.warning(f"LLM health check errored: {e}")
         self._ready = True
 
     def is_ready(self) -> bool:

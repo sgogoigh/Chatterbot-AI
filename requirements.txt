@@ -1,5 +1,5 @@
 # Chatterbot-AI backend dependencies (CROSS-PLATFORM — installs on Windows).
-# See IMPLEMENTATION.md §2.2 and WINDOWS_TESTING.md. Pins are current minor lines.
+# See docs/IMPLEMENTATION.md §2.2 and docs/WINDOWS_TESTING.md. Pins are current minor lines.
 # NOTE: Piper TTS (piper-phonemize) has no Windows wheel (R12), so it lives in
 # requirements-linux.txt (container only). On Windows, TTS uses edge-tts.
 

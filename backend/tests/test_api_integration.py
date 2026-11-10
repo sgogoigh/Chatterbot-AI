@@ -159,14 +159,23 @@ async def test_control_pause_and_stop(app):
 
 
 # ----------------------------------------------------- single-session (S10)
-async def test_second_concurrent_session_rejected(app):
-    """S10: a second active session is rejected with 409 (single-presentation constraint)."""
+async def test_second_session_supersedes_first(app):
+    """S10: a new presentation supersedes any prior one (single active session).
+
+    Previously this returned 409, but a session is only freed explicitly via stop,
+    so a refreshed/closed tab would orphan one and permanently block new sessions.
+    Now the stale session is reclaimed: the second start succeeds and the first is
+    gone.
+    """
     async with await _client(app) as ac:
         job_id = await _upload_and_build(ac)
         r1 = await ac.post("/api/sessions", json={"job_id": job_id})
         assert r1.status_code == 200
+        sid1 = r1.json()["session_id"]
         r2 = await ac.post("/api/sessions", json={"job_id": job_id})
-        assert r2.status_code == 409
+        assert r2.status_code == 200
+        # the first session was reclaimed (superseded)
+        assert (await ac.get(f"/api/sessions/{sid1}/status")).status_code == 404
 
 
 # ----------------------------------------------------- error paths

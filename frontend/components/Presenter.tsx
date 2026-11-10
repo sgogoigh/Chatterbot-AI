@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { connectVoice, type VoiceConnection } from "@/lib/livekit";
+import { useToast } from "./Toast";
 import type { SlideContent, StartSessionResponse, StatusResponse } from "@/lib/types";
 import VoiceOrb from "./VoiceOrb";
 
@@ -39,31 +40,34 @@ export default function Presenter({
   const [session, setSession] = useState<StartSessionResponse | null>(null);
   const [slides, setSlides] = useState<SlideContent[]>([]);
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState<"off" | "connecting" | "live" | "error">("off");
   const [voiceMsg, setVoiceMsg] = useState<string | null>(null);
-  const [imgFailed, setImgFailed] = useState(false);
+  // Index of the slide whose image failed to load; derived per slide so moving to
+  // another slide retries without resetting state in an effect.
+  const [failedImg, setFailedImg] = useState<number | null>(null);
+  const notify = useToast();
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const connRef = useRef<VoiceConnection | null>(null);
+  const startedRef = useRef(false);
 
-  // Start a session + load slide metadata once.
+  // Start a session + load slide metadata exactly once. The guard is essential:
+  // without it, React StrictMode's double-invoked effect fires two POST /api/sessions,
+  // and the backend's single-presentation rule keeps the second while we'd hold the
+  // first — every later navigate/control then 404s ("unknown session").
   useEffect(() => {
-    let alive = true;
+    if (startedRef.current) return;
+    startedRef.current = true;
     (async () => {
       try {
         const [s, sl] = await Promise.all([api.startSession(jobId), api.slides(jobId)]);
-        if (!alive) return;
         setSession(s);
         setSlides(sl);
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : "Couldn't start the session.");
+        notify(e instanceof Error ? e.message : "Couldn't start the session.");
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, [jobId]);
+  }, [jobId, notify]);
 
   // Poll session status for phase / slide / drift.
   useEffect(() => {
@@ -88,10 +92,23 @@ export default function Presenter({
   // Disconnect voice on unmount.
   useEffect(() => () => void connRef.current?.disconnect(), []);
 
+  // Release the session when the tab actually closes / navigates away / refreshes,
+  // so it doesn't stay "active" and block the next presentation. `pagehide` (not a
+  // React unmount) is used on purpose: it won't fire on StrictMode's simulated
+  // unmount, so it can't kill a session we just created. Tab-switching does not
+  // trigger pagehide, so switching away mid-talk leaves the session alive.
+  useEffect(() => {
+    if (!session) return;
+    const sid = session.session_id;
+    const onHide = () => api.stopBeacon(sid);
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [session]);
+
   const current = status?.current_slide ?? 0;
   const slide = slides[current];
 
-  useEffect(() => setImgFailed(false), [current]);
+  const imgFailed = failedImg === current;
 
   const nav = useCallback(
     async (intent: "NEXT" | "PREV") => {
@@ -99,10 +116,10 @@ export default function Presenter({
       try {
         setStatus(await api.navigate(session.session_id, intent));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Navigation failed.");
+        notify(e instanceof Error ? e.message : "Navigation failed.");
       }
     },
-    [session],
+    [session, notify],
   );
 
   const goto = useCallback(
@@ -111,10 +128,10 @@ export default function Presenter({
       try {
         setStatus(await api.navigate(session.session_id, "GOTO", i));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Navigation failed.");
+        notify(e instanceof Error ? e.message : "Navigation failed.");
       }
     },
-    [session],
+    [session, notify],
   );
 
   const control = useCallback(
@@ -123,10 +140,10 @@ export default function Presenter({
       try {
         setStatus(await api.control(session.session_id, action));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Control failed.");
+        notify(e instanceof Error ? e.message : "Control failed.");
       }
     },
-    [session],
+    [session, notify],
   );
 
   const toggleVoice = useCallback(async () => {
@@ -157,10 +174,10 @@ export default function Presenter({
   const overBudget = drift > 0.05;
 
   return (
-    <div className="rise mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[1fr_320px]">
+    <div className="rise grid h-full min-h-0 w-full gap-5 lg:grid-cols-[1fr_320px]">
       {/* ---------------- stage ---------------- */}
-      <section className="flex flex-col gap-4">
-        <div className="panel relative aspect-video w-full overflow-hidden">
+      <section className="flex min-h-0 flex-col gap-3">
+        <div className="panel relative min-h-0 w-full flex-1 overflow-hidden">
           {slide && !imgFailed ? (
             // Backend-rendered raster; falls back to a text card if unavailable.
             // eslint-disable-next-line @next/next/no-img-element
@@ -168,7 +185,7 @@ export default function Presenter({
               src={api.slideImage(jobId, current)}
               alt={slide.title || `Slide ${current + 1}`}
               className="h-full w-full object-contain bg-panel-2"
-              onError={() => setImgFailed(true)}
+              onError={() => setFailedImg(current)}
             />
           ) : (
             <div className="flex h-full flex-col justify-center gap-4 p-10">
@@ -266,7 +283,7 @@ export default function Presenter({
       </section>
 
       {/* ---------------- rail ---------------- */}
-      <aside className="flex flex-col gap-5">
+      <aside className="flex min-h-0 flex-col gap-4 overflow-hidden">
         <div className="panel flex flex-col items-center gap-4 p-6">
           <VoiceOrb phase={phase} />
           <div className="flex items-center gap-2">
@@ -319,11 +336,6 @@ export default function Presenter({
         )}
       </aside>
 
-      {error && (
-        <p className="lg:col-span-2 text-sm text-over" role="alert">
-          {error}
-        </p>
-      )}
       <audio ref={audioRef} autoPlay className="hidden" />
     </div>
   );

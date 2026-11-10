@@ -9,6 +9,44 @@
 
 ---
 
+## 0. Project status snapshot (2026-11-11)
+
+**Verified on Windows:** `pytest` from `backend/` → **50 passed, 1 skipped** (the
+skip is the E2E-latency placeholder). Frontend `tsc --noEmit` and `eslint` clean.
+
+**Fixed in the status review** (details in [`ERRORS.md`](./ERRORS.md) 13–20):
+`frontend/lib/` was gitignored (fresh clones couldn't build the UI); the Docker
+image lacked Piper + its voice; compose paths, its `.env` location and the
+browser-facing LiveKit URL were wrong; two React lint errors; uploads were
+buffered fully in memory; the default Groq model had been retired, so every LLM
+call was silently failing.
+
+**LLM:** Gemini 3.8 Flash → Groq `gpt-oss-120b` → Ollama chain; both cloud
+backends probed OK live. Spot latency: Groq ~0.65 s vs Gemini ~1.7 s per short
+answer — compare properly in Tier 2 before settling `CB_LLM_PRIMARY`.
+
+**Deployment:** production plan (Vercel + Fly.io + LiveKit Cloud) in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md) — not yet deployed.
+
+**Still open — testing (deferred):**
+- Container image never built/run end-to-end; Piper never actually synthesized (Tier 2).
+- S14c: participant mic → agent answer over live WebRTC; Tier 4 browser acceptance.
+- S9 / S11 / S12 (LLM fallback, long question, out-of-deck question) with real models.
+- Formal gates: `test_e2e_latency.py` is a placeholder; intent accuracy uses 6
+  sample phrases (no 68/22/9 labelled corpus); no barge-in matrix, TBA sweep or
+  footprint audit; no `docker-compose.test.yml`.
+
+**Still open — non-testing:**
+- No CI (`.github/` absent) — nothing runs the suite on push.
+- No auth on any endpoint; CORS is `*` (kept deliberately for now).
+- Slide rasterization needs LibreOffice, so it only works in the container.
+- `piper_exe` TTS backend is listed but not implemented.
+- Docker base image is tag-pinned, not digest-pinned.
+- Single-instance, in-memory session/job state: the backend cannot scale past one machine (see DEPLOYMENT.md §6).
+- Resolved: LiveKit Cloud for production; Gemini 3.8 Flash primary + Groq `gpt-oss-120b` fallback (revisit after latency tests).
+
+---
+
 ## 1. Where we are now (baseline)
 
 **Already validated (component level, local venv):**
@@ -89,7 +127,7 @@ utterances into the input loop; capture the agent's pushed audio to a WAV file;
 assert transcripts, answers, and timing.
 - *Why:* proves the actual models behave in-pipeline (e.g. Whisper transcribes the
   barge-in, Piper renders the answer, RAG+LLM grounds it).
-- *Needs:* **Linux/Docker** (Piper) + **Groq key or Ollama**.
+- *Needs:* **Linux/Docker** (Piper) + **Gemini/Groq key or Ollama**.
 - *Mechanisms covered:* 4, 6 + benchmark tables.
 
 ### Tier 3 — Full LiveKit loop (real WebRTC)
@@ -104,7 +142,7 @@ reconnect.
 ### Tier 4 — Manual / human acceptance (browser + mic)
 A person runs the Next.js frontend, presents, interrupts, asks questions. Final
 UX acceptance + the ≥90% satisfaction objective.
-- *Blocked on:* the frontend (not yet built).
+- *Unblocked:* the Next.js frontend exists (`frontend/`); not yet run as a full human session.
 
 ---
 
@@ -124,13 +162,14 @@ assertion. IDs reused across tiers.
 | S7 | Pacing drift → track switch STANDARD→SUMMARY→TURBO | 1,2 | 4 | upcoming track changes on drift; no switch on schedule | ✅ T1 |
 | S8 | Spurious VAD (noise) → empty STT → resume | 1,2 | 1 | no intent fired; zero context loss | ✅ T1 |
 | S-full | Both loops together: barge-in detected + no deadlock | 1 | 1,2,3 | burst transcribed, question answered, gather completes | ✅ T1 |
-| S9 | LLM (Groq) down → Ollama fallback → graceful degrade | 2 | 6 | answer via fallback or graceful message; session survives | ⏳ T2 |
-| S10 | Second concurrent session rejected | HTTP | — | `409` (single-presentation constraint) | ✅ API |
+| S9 | Primary LLM (Gemini) down → Groq → Ollama fallback → graceful degrade | 2 | 6 | answer via fallback or graceful message; session survives | ⏳ T2 |
+| S10 | Second session supersedes the first | HTTP | — | second start succeeds; first is reclaimed (single-presentation constraint; was `409`) | ✅ API |
 | S11 | Long question (>2 s) handled | 2 | — | utterance capped at `stt_max_utterance_ms`; completes (R3) | ⏳ T2 |
 | S12 | Out-of-deck question → no hallucination | 2 | 6 | answer states info not in slides | ⏳ T2 |
 | S13 | Upload → build (3 tracks) → status → session | HTTP | control | build completes; 3 tracks; navigate/status work | ✅ API |
 | S14 | Agent joins LiveKit room + streams narration to a participant | 3 | all | agent dispatched, track subscribed, audio frames received | ✅ live (agent→participant) |
-| S14b | Participant mic → agent answer round-trip | 3 | all | agent transcribes published mic + answers | ⏳ needs browser mic |
+| S14b | Real human voice → STT → intent → RAG → answer (per-clip) | clips | 3,6 | transcript + intent + grounded answer graded vs deck | ✅ 13/14 local · 14/14 Groq STT (`tests/run_clips.py`) |
+| S14c | Participant mic → agent answer over live WebRTC | 3 | all | agent transcribes published mic + answers | ⏳ needs browser mic |
 
 ✅ T1 = `tests/test_agent_e2e.py` (12). ✅ API = `tests/test_api_integration.py` (8,
 real HTTP via httpx ASGITransport). Full Windows pipeline verified by
@@ -183,13 +222,13 @@ These don't exist yet and are required for Tiers 1–3:
 - [ ] `make`/task runner for `make bench`, `make e2e` (optional but tidy).
 
 **Credentials / services**
-- [ ] **Groq API key** (`CB_GROQ_API_KEY`) for real Q&A + script generation — OR
+- [x] **Gemini and/or Groq API key** (`GEMINI_API_KEY` / `GROQ_API_KEY`) for real Q&A + script generation — both present in `.env` and probed OK — OR
 - [ ] **Ollama** running locally with `llama3.1:8b` pulled (fallback path; also lets S9 be tested).
 - [ ] **LiveKit** for Tier 3: either self-hosted (`livekit-server --dev`, keys via env) or LiveKit Cloud creds (`CB_LIVEKIT_URL/API_KEY/API_SECRET`).
 
 **Test assets / fixtures**
-- [ ] A **sample `.pptx`** (~5–10 slides): mixed text + speaker notes + at least one image containing text (to exercise OCR) + a "facts" slide (revenue/numbers) for RAG grounding checks.
-- [ ] **Recorded/synthesized WAV utterances** (16 kHz mono), one per intent path: `"next slide"`, `"go back"`, `"go to slide three"`, `"what was the revenue"`, `"stop"`, `"okay"`, plus a long (>2 s) question for S11 and an out-of-deck question for S12.
+- [x] A **sample `.pptx`** (~5–10 slides) — `test_assets/terragrid_q3.pptx`: mixed text + speaker notes + at least one image containing text (to exercise OCR) + a "facts" slide (revenue/numbers) for RAG grounding checks.
+- [~] **Recorded/synthesized WAV utterances** (16 kHz mono) — 14 real `.m4a` clips recorded locally from `test_assets/CLIP_SCRIPT.md` (gitignored: personal audio); S11/S12-specific clips still needed, one per intent path: `"next slide"`, `"go back"`, `"go to slide three"`, `"what was the revenue"`, `"stop"`, `"okay"`, plus a long (>2 s) question for S11 and an out-of-deck question for S12.
 - [ ] **Labeled intent corpus** matching the doc's split (68 standard / 22 adversarial / 9 noisy) to assert the ≥95% gate. ← *needed to formally close the accuracy gate; the doc lists counts but not the phrases.*
 - [ ] **Ground-truth transcripts** for the WAV utterances (STT WER measurement).
 - [ ] **Expected-answer / source-slide map** for RAG grounding assertions.
