@@ -26,7 +26,10 @@ function colorFor(phase: SessionPhase): string {
 export default function VoiceOrb({ phase }: { phase: SessionPhase }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const phaseRef = useRef<SessionPhase>(phase);
-  phaseRef.current = phase;
+  // Keep the latest phase visible to the animation loop without re-starting it.
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

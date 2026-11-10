@@ -42,7 +42,9 @@ export default function Presenter({
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [voice, setVoice] = useState<"off" | "connecting" | "live" | "error">("off");
   const [voiceMsg, setVoiceMsg] = useState<string | null>(null);
-  const [imgFailed, setImgFailed] = useState(false);
+  // Index of the slide whose image failed to load; derived per slide so moving to
+  // another slide retries without resetting state in an effect.
+  const [failedImg, setFailedImg] = useState<number | null>(null);
   const notify = useToast();
 
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -106,7 +108,7 @@ export default function Presenter({
   const current = status?.current_slide ?? 0;
   const slide = slides[current];
 
-  useEffect(() => setImgFailed(false), [current]);
+  const imgFailed = failedImg === current;
 
   const nav = useCallback(
     async (intent: "NEXT" | "PREV") => {
@@ -183,7 +185,7 @@ export default function Presenter({
               src={api.slideImage(jobId, current)}
               alt={slide.title || `Slide ${current + 1}`}
               className="h-full w-full object-contain bg-panel-2"
-              onError={() => setImgFailed(true)}
+              onError={() => setFailedImg(current)}
             />
           ) : (
             <div className="flex h-full flex-col justify-center gap-4 p-10">
