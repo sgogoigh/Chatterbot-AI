@@ -26,10 +26,13 @@ backends probed OK live. Spot latency: Groq ~0.65 s vs Gemini ~1.7 s per short
 answer — compare properly in Tier 2 before settling `CB_LLM_PRIMARY`.
 
 **Deployment:** production plan (Vercel + Fly.io + LiveKit Cloud) in
-[`DEPLOYMENT.md`](./DEPLOYMENT.md) — not yet deployed.
+[`DEPLOYMENT.md`](./DEPLOYMENT.md). Backend live on Fly.io at
+<https://chatterbot-backend.fly.dev> (`shared-cpu-2x`, 4 GB; health and readiness
+checks pass); no voice session run there yet. Frontend (Vercel) not deployed yet.
 
 **Still open — testing (deferred):**
-- Container image never built/run end-to-end; Piper never actually synthesized (Tier 2).
+- Container image builds and boots (locally and on Fly, models warm), but no full
+  session has run in it; Piper never actually synthesized (Tier 2).
 - S14c: participant mic → agent answer over live WebRTC; Tier 4 browser acceptance.
 - S9 / S11 / S12 (LLM fallback, long question, out-of-deck question) with real models.
 - Formal gates: `test_e2e_latency.py` is a placeholder; intent accuracy uses 6

@@ -1,8 +1,10 @@
 # Chatterbot-AI — Production Deployment (Vercel + Fly.io + LiveKit Cloud)
 
-> **Status (2026-11-11):** the image builds on Fly; machine launches failed twice
-> (no performance machines, then a 2-CPU-core cap per machine) — now `shared-cpu-2x`. Not yet
-> confirmed running; the Vercel frontend is not deployed yet. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
+> **Status (2026-11-11):** backend **live** at <https://chatterbot-backend.fly.dev>
+> (`shared-cpu-2x`, 4 GB, `ams`); `/healthz` and `/readyz` return 200. It only
+> launched after two refusals (no performance machines, then a 2-CPU-core cap per
+> machine). The launcher created **two** machines — scale to one (§4.4). No voice
+> session has run on it yet, and the Vercel frontend is not deployed yet. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 > §22 (image), [`E2E_TESTING.md`](./E2E_TESTING.md) §0 (open gaps).
 
 ---
@@ -134,6 +136,9 @@ fly deploy --ha=false --wait-timeout 15m
 fly scale count 1            # make sure exactly ONE machine exists (constraint 1)
 fly status
 ```
+- After a deploy, Fly prints *"Creating a second machine for high availability …
+  set `min_machines_running = 0`"*. **Don't follow that suggestion:** it would also let
+  Fly stop the only machine. Use `--ha=false` / `fly scale count 1` instead.
 - `--ha=false` stops Fly from creating the default second machine.
 - `--wait-timeout` covers the long first build and the `/readyz` check, which
   only passes once models are warmed. Fly caps `grace_period` at 1 minute, so
@@ -152,15 +157,23 @@ fly status
 | *Your organization is not allowed to use performance machines* | New orgs are limited to shared CPUs | Use a shared size, or ask billing@fly.io to unlock performance machines |
 | *Your organization is limited to 2 CPU cores per machine* | New-org CPU cap; `shared-cpu-4x` has 4 cores | `size = 'shared-cpu-2x'` in `backend/fly.toml`, or ask billing@fly.io to raise the cap |
 | *grace period greater than 1 minute … will be lowered* (warning) | Fly's cap | `grace_period = '1m0s'` |
-| *This deployment will: create 2 "app" machines* | Fly's high-availability default | Deploy with `fly deploy --ha=false` from `backend/`, or run `fly scale count 1 -a chatterbot-backend` afterwards |
+| *This deployment will: create 2 "app" machines* (happened on the first successful deploy: `811d09da9e4178` + `2862197c446508`) | Fly's high-availability default; dashboard deploys don't pass `--ha=false` | Deploy with `fly deploy --ha=false` from `backend/`, or run `fly scale count 1 -a chatterbot-backend` afterwards |
 
 ### 4.5 Verify
+Production URL: **<https://chatterbot-backend.fly.dev>**
+
 ```bash
 curl https://chatterbot-backend.fly.dev/healthz     # {"status":"ok"}
 curl https://chatterbot-backend.fly.dev/readyz      # {"status":"ready"} once warm
 fly logs | grep "LLM backend"                        # expect gemini OK, groq OK
 ```
-`ollama ... UNAVAILABLE` in the log is expected: there's no Ollama on Fly.
+- `ollama ... UNAVAILABLE` in the log is expected: there's no Ollama on Fly.
+- **`/` returns 404 `{"detail":"Not Found"}` — expected.** The API has no root
+  route (routes are `/healthz`, `/readyz`, `/api/...`), so Fly's post-deploy
+  warning *"returned a 404 HTTP code"* is not a fault. The interactive API docs
+  are at `/docs`.
+
+Checked 2026-11-11: `/healthz` 200, `/readyz` 200, `/docs` 200, `/` 404.
 
 ### 4.6 Custom domain (optional)
 ```bash
