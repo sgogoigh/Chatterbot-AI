@@ -3,8 +3,12 @@
 > **Status (2026-11-11):** backend **live** at <https://chatterbot-backend.fly.dev>
 > (`shared-cpu-2x`, 4 GB, `ams`); `/healthz` and `/readyz` return 200. It only
 > launched after two refusals (no performance machines, then a 2-CPU-core cap per
-> machine). The launcher created **two** machines — scale to one (§4.4). No voice
-> session has run on it yet, and the Vercel frontend is not deployed yet. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
+> machine). The launcher created **two** machines — scale to one (§4.4).
+> Frontend **live** at <https://chatterbot-ai.vercel.app> (built with
+> `NEXT_PUBLIC_API_BASE=https://chatterbot-backend.fly.dev`).
+> **Open:** later the same day the backend stopped answering (`/healthz` timed out
+> or returned a Fly-proxy 503 after ~38 s, continuously for 6+ min); cause not
+> yet diagnosed (§4.7). No end-to-end session has run in production yet. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 > §22 (image), [`E2E_TESTING.md`](./E2E_TESTING.md) §0 (open gaps).
 
 ---
@@ -175,7 +179,31 @@ fly logs | grep "LLM backend"                        # expect gemini OK, groq OK
 
 Checked 2026-11-11: `/healthz` 200, `/readyz` 200, `/docs` 200, `/` 404.
 
-### 4.6 Custom domain (optional)
+### 4.6 Production URLs
+| Piece | URL |
+|---|---|
+| Frontend (Vercel) | <https://chatterbot-ai.vercel.app> |
+| Backend (Fly.io) | <https://chatterbot-backend.fly.dev> (`/healthz`, `/readyz`, `/docs`) |
+
+### 4.7 Backend not responding (diagnosis)
+Symptom seen 2026-11-11: every request times out, or Fly's proxy returns 503
+after ~38 s. That means no machine is accepting connections; the app code isn't
+the first suspect (uploads, builds and LLM calls all run off the event loop). Check, in order:
+```bash
+fly status -a chatterbot-backend          # machine state: started / stopped / replacing
+fly machine list -a chatterbot-backend    # one machine, checks passing?
+fly logs -a chatterbot-backend            # look for "Out of memory", "Killed", tracebacks,
+                                          # or repeated startup (restart loop)
+```
+- **OOM / restart loop:** 4 GB is the ceiling of `shared-cpu-2x`. Whisper +
+  MiniLM + Piper + LibreOffice (slide rendering on upload) may not fit. If the
+  logs show OOM, the next step is `CB_WHISPER_MODEL=base.en` or rendering slides
+  in a lower-memory way. Don't add swap without measuring.
+- **Slow boot:** models load before uvicorn listens. On 2 shared cores that may
+  take minutes; the proxy returns 503 the whole time.
+- **Stopped machine:** `fly machine start <id>`.
+
+### 4.8 Custom domain (optional)
 ```bash
 fly certs add api.example.com      # then add the DNS records it prints
 ```
@@ -183,6 +211,10 @@ fly certs add api.example.com      # then add the DNS records it prints
 ---
 
 ## 5. Frontend on Vercel
+
+**Deployed:** <https://chatterbot-ai.vercel.app> (Root Directory `frontend`).
+Checked 2026-11-11: page 200, and the client bundle contains the Fly backend
+URL (the `localhost:8000` string also in it is only the code's fallback).
 
 The frontend calls the backend from the browser through `NEXT_PUBLIC_API_BASE`
 ([frontend/lib/api.ts](../frontend/lib/api.ts)). It is inlined **at build

@@ -206,7 +206,8 @@ Chatterbot-AI/
 
 For production (Vercel frontend + Fly.io backend + LiveKit Cloud), see
 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md). The backend is live at
-<https://chatterbot-backend.fly.dev> (`/healthz`, `/readyz`, API docs at `/docs`).
+<https://chatterbot-backend.fly.dev> (`/healthz`, `/readyz`, API docs at `/docs`)
+and the frontend at <https://chatterbot-ai.vercel.app>.
 
 The image installs `requirements.txt` + `requirements-linux.txt` (Piper TTS) with
 CPU-only torch, **bakes the Whisper / MiniLM / Piper weights in at build time**

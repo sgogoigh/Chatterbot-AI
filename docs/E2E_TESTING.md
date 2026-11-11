@@ -28,7 +28,9 @@ answer — compare properly in Tier 2 before settling `CB_LLM_PRIMARY`.
 **Deployment:** production plan (Vercel + Fly.io + LiveKit Cloud) in
 [`DEPLOYMENT.md`](./DEPLOYMENT.md). Backend live on Fly.io at
 <https://chatterbot-backend.fly.dev> (`shared-cpu-2x`, 4 GB; health and readiness
-checks pass); no voice session run there yet. Frontend (Vercel) not deployed yet.
+checks passed at first). Frontend live on Vercel at <https://chatterbot-ai.vercel.app>.
+The backend later stopped responding (timeouts / proxy 503); see
+DEPLOYMENT.md §4.7. No production end-to-end session yet.
 
 **Still open — testing (deferred):**
 - Container image builds and boots (locally and on Fly, models warm), but no full
