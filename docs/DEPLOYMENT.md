@@ -1,7 +1,7 @@
 # Chatterbot-AI — Production Deployment (Vercel + Fly.io + LiveKit Cloud)
 
-> **Status (2026-11-11):** the image builds on Fly; the first machine launch failed
-> because the org can't use performance machines — now `shared-cpu-4x`. Not yet
+> **Status (2026-11-11):** the image builds on Fly; machine launches failed twice
+> (no performance machines, then a 2-CPU-core cap per machine) — now `shared-cpu-2x`. Not yet
 > confirmed running; the Vercel frontend is not deployed yet. Companion docs: [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 > §22 (image), [`E2E_TESTING.md`](./E2E_TESTING.md) §0 (open gaps).
 
@@ -49,7 +49,8 @@ These come from the current code, not from Fly or Vercel:
    crash drops in-flight sessions and uploaded decks. Users re-upload.
 5. **CPU real-time audio.** VAD + Whisper STT + Piper TTS run on the machine's
    CPU. Dedicated (`performance`) CPUs are the right fit; the org can't use them
-   yet, so it runs on `shared-cpu-4x`, which can lag under sustained load.
+   yet and is capped at 2 cores per machine, so it runs on `shared-cpu-2x`, which
+   can lag under sustained load.
 
 ---
 
@@ -137,17 +138,19 @@ fly status
 - `--wait-timeout` covers the long first build and the `/readyz` check, which
   only passes once models are warmed. Fly caps `grace_period` at 1 minute, so
   the first checks may fail on a slow boot; the deploy keeps checking.
-- Machine size: `shared-cpu-4x`, 4 GB, because the org isn't allowed
-  `performance` machines (see "Deploy errors seen so far" below). Shared CPUs burst above a small baseline, so
+- Machine size: `shared-cpu-2x`, 4 GB (that size's memory maximum), because the
+  org isn't allowed `performance` machines and is capped at 2 CPU cores per
+  machine (see "Deploy errors seen so far" below). Shared CPUs burst above a small baseline, so
   live voice may lag under sustained load. Switch to `performance-2x` once Fly
-  billing unlocks it. Neither size has been measured; check CPU and memory in the
+  billing lifts both limits. Neither size has been measured; check CPU and memory in the
   Fly dashboard after a real session.
 
 #### Deploy errors seen so far
 | Error | Cause | Fix |
 |---|---|---|
 | *Could not find a Dockerfile, nor detect a runtime or framework* | Launcher path was not `backend/`, or the commit predates the `backend/` layout | Set the path to `backend`; deploy a commit that has `backend/Dockerfile` |
-| *Your organization is not allowed to use performance machines* | New orgs are limited to shared CPUs | `size = 'shared-cpu-4x'` in `backend/fly.toml`, or ask billing@fly.io to unlock performance machines |
+| *Your organization is not allowed to use performance machines* | New orgs are limited to shared CPUs | Use a shared size, or ask billing@fly.io to unlock performance machines |
+| *Your organization is limited to 2 CPU cores per machine* | New-org CPU cap; `shared-cpu-4x` has 4 cores | `size = 'shared-cpu-2x'` in `backend/fly.toml`, or ask billing@fly.io to raise the cap |
 | *grace period greater than 1 minute … will be lowered* (warning) | Fly's cap | `grace_period = '1m0s'` |
 | *This deployment will: create 2 "app" machines* | Fly's high-availability default | Deploy with `fly deploy --ha=false` from `backend/`, or run `fly scale count 1 -a chatterbot-backend` afterwards |
 
@@ -226,7 +229,7 @@ vercel --prod
 | Frontend rollback | Vercel dashboard → Deployments → promote a previous one |
 
 **Cost drivers:**
-- One always-on Fly machine (`shared-cpu-4x` now, `performance-2x` later): the main fixed cost.
+- One always-on Fly machine (`shared-cpu-2x` now, `performance-2x` later): the main fixed cost.
 - LiveKit Cloud participant minutes.
 - Gemini/Groq tokens: script generation per build, plus each answer.
 
