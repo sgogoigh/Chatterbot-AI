@@ -39,9 +39,11 @@ primary_region = 'ams'
     method = 'GET'
     path = '/readyz'
 
-# The org can't use performance (dedicated-CPU) machines yet. Shared CPUs burst
-# above a small baseline, so real-time STT/TTS may lag under sustained load;
-# switch to size = 'performance-2x' once billing unlocks it.
+# The org can't use performance (dedicated-CPU) machines and is capped at 2 CPU
+# cores per machine, so shared-cpu-2x is the largest allowed size (4 GB is its
+# memory maximum). Shared CPUs burst above a small baseline, so real-time STT/TTS
+# may lag under sustained load; switch to size = 'performance-2x' once billing
+# lifts both limits.
 [[vm]]
-  size = 'shared-cpu-4x'
+  size = 'shared-cpu-2x'
   memory = '4gb'

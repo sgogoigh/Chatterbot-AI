@@ -348,6 +348,19 @@ context, and compose builds from there too. Local install is
 
 ---
 
+## PROBLEM 22 — Fly machine launch refused: CPU limits on a new org
+**Topic:** deployment (found at first Fly deploys)
+**[Description & Effect]**
+The image built, but no machine started. First *"Your organization is not
+allowed to use performance machines"* (`performance-2x`), then, on
+`shared-cpu-4x`, *"Your organization is limited to 2 CPU cores per machine"*.
+**FIX —** `backend/fly.toml` now uses `size = 'shared-cpu-2x'`, `memory = '4gb'`
+(the largest allowed shape). Real-time STT/TTS on 2 shared cores is unmeasured;
+move to `performance-2x` once billing@fly.io lifts the limits. See
+[DEPLOYMENT.md](./DEPLOYMENT.md) §4.4.
+
+---
+
 ## Non-blocking warnings (no fix required)
 - **HuggingFace symlink warning** on Windows (`huggingface_hub` cache falls back to
   copies without Developer Mode). Cosmetic; silenced in runs with
